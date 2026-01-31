@@ -1,0 +1,16 @@
+[package]
+name = "corevo"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+subxt = {  version = "0.44" }
+subxt-signer = { version = "0.44" , features = ["subxt"] }
+tokio = { version = "1.44.2", features = ["macros", "time", "rt-multi-thread"] }
+futures = "0.3"
+rand = "0.8"
+crypto_box = { version = "0.9", features = ["chacha20"] }
+x25519-dalek = {  version = "2.0", features = ["static_secrets"] }
+sha2 = "0.10"
