@@ -12,7 +12,8 @@ use rand::random;
 use codec::Encode;
 use futures::future::join_all;
 
-#[subxt::subxt(runtime_metadata_path = "paseo_people_metadata.scale")]
+// [subxt::subxt(runtime_metadata_path = "paseo_people_metadata.scale")]
+#[subxt::subxt(runtime_metadata_path = "kusama_asset_hub_metadata.scale")]
 pub mod assethub {}
 
 // PolkadotConfig or SubstrateConfig will suffice for this example at the moment,
@@ -31,7 +32,8 @@ pub async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let api = OnlineClient::<AssetHubConfig>::from_url("wss://sys.ibp.network/people-paseo").await?;
+    //let api = OnlineClient::<AssetHubConfig>::from_url("wss://sys.ibp.network/people-paseo").await?;
+    let api = OnlineClient::<AssetHubConfig>::from_url("wss://sys.ibp.network/asset-hub-kusama:443").await?;
     println!("Connection with parachain established.");
 
     let (proposer,
@@ -56,7 +58,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     CorevoRemark::V1(CorevoRemarkV1 {
                         context: CONTEXT.as_bytes().to_vec(),
                         msg: CorevoMessage::AnnounceOwnPubKey(signer.x25519_public.to_bytes())
-                    })))).await;
+                    }).into()))).await;
     println!("*********** INVITE PHASE **************" );
     let common_salt = random::<[u8; 32]>();
     println!("common salt: {}", hex::encode(common_salt.encode()));
@@ -73,7 +75,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 account.sr25519_keypair.public_key().to_account_id(),
                 encrypt_for_recipient(&proposer.x25519_secret, &account.x25519_public, &common_salt.into()).unwrap()
             )
-        })).await?
+        }).into()).await?
     }
 
     println!("*********** COMMIT PHASE ************" );
@@ -97,7 +99,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         msg: CorevoMessage::Commit(commitment,
                         encrypt_for_recipient(&signer.x25519_secret, &signer.x25519_public,
                             &vote_and_salt.encode()).unwrap_or_default())
-                    }))
+                    }).into())
     })).await;
 
     println!("*********** REVEAL PHASE ************" );
@@ -108,7 +110,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     CorevoRemark::V1(CorevoRemarkV1 {
                         context: CONTEXT.as_bytes().to_vec(),
                         msg: CorevoMessage::RevealOneTimeSalt(vote_and_salt.onetime_salt)
-                    }))
+                    }).into())
     })).await;
 
     listener_handle.await?;

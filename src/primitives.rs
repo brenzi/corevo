@@ -19,7 +19,7 @@ pub enum CorevoRemark {
 
 /// for easy filtering, we prefix the encoded remark
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct PrefixedCorevoRemark(CorevoRemark);
+pub struct PrefixedCorevoRemark(pub CorevoRemark);
 impl Encode for PrefixedCorevoRemark {
     fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
         dest.write(&COREVO_REMARK_PREFIX);
@@ -28,6 +28,12 @@ impl Encode for PrefixedCorevoRemark {
 
     fn size_hint(&self) -> usize {
         COREVO_REMARK_PREFIX.len() + self.0.size_hint()
+    }
+}
+
+impl From<CorevoRemark> for PrefixedCorevoRemark {
+    fn from(cr: CorevoRemark) -> Self {
+        PrefixedCorevoRemark(cr)
     }
 }
 

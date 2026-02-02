@@ -61,16 +61,6 @@ For each member's last submitted commitment, guess the vote by trying all possib
 A group can decide to reveal their votes to an auditor by sharing the *common salt* along with the *context* for all their ballots. 
 Knowing all account addresses of a group and the *common salt* for each proposal the auditor can reproduce everything from all onchain system.remarks.
 
-## Indexing Voting History
-
-We use [litescan](https://github.com/pifragile/litescan) indexer which feeds into a mongodb. 
-This allows for fine-grained filtering in our queries as we prefix each remark with `0xcc00ee` directly followed by a version byte and the *context*.
-
-example litescan mongodb query:
-`{method: "remark", "args.remark": { $regex: /^0xcc00ee/i }}`
-
-TODO: mongodb query in cli and counting all votes.
-
 ## For Developers
 
 Add or update metadata for different chains
@@ -80,4 +70,54 @@ subxt metadata  --url wss://polkadot-asset-hub-rpc.polkadot.io:443 > polkadot_as
 subxt metadata  --url wss://sys.ibp.network/asset-hub-kusama:443 > kusama_asset_hub_metadata.scale
 subxt metadata  --url wss://sys.ibp.network/asset-hub-paseo:443 > paseo_asset_hub_metadata.scale
 subxt metadata  --url wss://collectives-paseo.rpc.amforc.com:443 > paseo_collectives_metadata.scale
+```
+
+### Indexing Voting History
+
+We use [litescan](https://github.com/pifragile/litescan) indexer which feeds into a mongodb.
+This allows for fine-grained filtering in our queries as we prefix each remark with `0xcc00ee` directly followed by a version byte and the *context*.
+
+example litescan mongodb query:
+`{method: "remark", "args.remark": { $regex: /^0xcc00ee/i }}`
+
+TODO: mongodb query in cli and counting all votes.
+
+Install mongosh
+```
+curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc |    sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg    --dearmor
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+sudo apt update
+sudo apt install -y mongodb-mongosh
+```
+
+Query test
+```
+mongosh "mongodb://readonly:123456@62.84.182.186:27017/?directConnection=true"   --eval 'db.getSiblingDB("litescan_kusama_assethub").extrinsics.find({ method: "remark", "args.remark": { $regex: /^0xcc00ee/i } }).pretty()'
+```
+This should give you all CoReVo remarks on Kusama Asset Hub.
+```json
+[
+  ...
+  {
+    _id: '12934873-2',
+    isSigned: true,
+    method: 'remark',
+    assetId: null,
+    era: { MortalEra: { period: '32', phase: '20' } },
+    metadataHash: null,
+    mode: '0',
+    nonce: '6',
+    signature: '0x64f8b1e08028415c264ef03056bb3e0958286959aca0ab068d0cb7d534c0057feead4614b2fa4d0aeae1fdda1b488404ef1e6ddc7948b669c0f50faed40b238a',
+    signer: { Id: 'HpsnhKb3cTKmm58xCoR8VEzzJzpLJZTvoVzs5mShmqBXcnx' },
+    tip: '0',
+    success: true,
+    blockNumber: 12934873,
+    blockHash: '0xa2628c88bcaf662bcdd5aefd6ee43be44c235ec86019efb5b5d3f79eb64b10bc',
+    timestamp: 1770021384000,
+    args: {
+      remark: '0xcc00ee0048636f7265766f5f746573745f766f74696e67031722543cb889b706ca9d517739b8eeec1b89fa957ac297dbf66f1c54fd074e8f'
+    },
+    section: 'system'
+  }
+]
 ```
