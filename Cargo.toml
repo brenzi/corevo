@@ -18,3 +18,4 @@ hex = "0.4.3"
 hex-literal = "0.4.1"
 codec = { package = "parity-scale-codec", version = "3.7.4"}
 blake2 = "0.10.6"
+mongodb = "3.5.0"

@@ -19,25 +19,10 @@ pub async fn listen_to_blocks(api: OnlineClient<AssetHubConfig>) -> Result<(), B
                     }
                 }
                 if let Ok(corevo_remark) = PrefixedCorevoRemark::decode(&mut remark.remark.as_slice()) {
-                    match corevo_remark.0 {
-                        CorevoRemark::V1(corevo_remark_v1) => {
-                            println!("⛓    It's a Corevo V1 remark for context: 0x{}", hex::encode(corevo_remark_v1.context));
-                            match corevo_remark_v1.msg {
-                                CorevoMessage::AnnounceOwnPubKey(pubkey_bytes) => {
-                                    println!("⛓      AnnounceOwnPubKey: 0x{}", hex::encode(pubkey_bytes));
-                                }
-                                CorevoMessage::InviteVoter(account, common_salt_enc) => {
-                                    println!("⛓      InviteVoter: {} with encrypted common salt 0x{}", account, hex::encode(common_salt_enc.encode()));
-                                }
-                                CorevoMessage::Commit(commitment, encrypted_vote_and_salt) => {
-                                    println!("⛓      Commit: commitment 0x{}", hex::encode(commitment.encode()));
-                                    println!("⛓              encrypted_vote_and_salt: 0x{}", hex::encode(encrypted_vote_and_salt.encode()));
-                                }
-                                CorevoMessage::RevealOneTimeSalt(onetime_salt) => {
-                                    println!("⛓      RevealOneTimeSalt: 0x{}", hex::encode(onetime_salt.encode()));
-                                }
-                            }
-                        }
+                    if let CorevoRemark::V1(corevo_remark_v1) = corevo_remark.0 {
+                        println!("⛓    CorevoV1 remark {}", corevo_remark_v1);
+                    } else {
+                        println!("⛓    Corevo Remark of unknown version");
                     }
                 } else {
                     println!("⛓    not a Corevo Remark");
@@ -65,3 +50,21 @@ pub async fn send_remark(api: &OnlineClient<AssetHubConfig>, signer: &Keypair, r
     Ok(())
 }
 
+/// Hex encodes given data and preappends a "0x".
+pub fn hex_encode(data: &[u8]) -> String {
+    let mut hex_str = hex::encode(data);
+    hex_str.insert_str(0, "0x");
+    hex_str
+}
+
+/// Helper method for decoding `0x`-prefixed hex.
+pub fn decode_hex<T: AsRef<[u8]>>(message: T) -> Result<Vec<u8>, hex::FromHexError> {
+    let message = message.as_ref();
+    let message = match message {
+        [b'0', b'x', hex_value @ ..] => hex_value,
+        _ => message,
+    };
+
+    let decoded_message = hex::decode(message)?;
+    Ok(decoded_message)
+}

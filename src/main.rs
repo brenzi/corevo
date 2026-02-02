@@ -1,9 +1,12 @@
 mod primitives;
 mod crypto;
 mod chain_helpers;
+mod indexer;
+
 use primitives::{CorevoRemark, CorevoRemarkV1, CorevoMessage, CorevoVote, CorevoVoteAndSalt};
 use crypto::{encrypt_for_recipient, decrypt_from_sender, derive_account};
 use chain_helpers::{listen_to_blocks, send_remark};
+use indexer::get_history;
 use std::collections::HashMap;
 use subxt::{
     OnlineClient, PolkadotConfig,
@@ -49,6 +52,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("block subscription task failed: {e}");
         }
     });
+    println!("⛓🗄️ fetching onchain history from indexer");
+    get_history().await.unwrap();
     println!("⛓ Listening to System.Remark Extrinsics in new finalized blocks...");
 
     println!("*********** SETUP PHASE **************" );
