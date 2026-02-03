@@ -95,7 +95,7 @@ pub enum CorevoMessage {
     InviteVoter(AccountId32, Vec<u8>),
     /// Commit your salted vote hash and persist the [`CorevoVoteAndSalt`], encrypted to yourself
     Commit(Commitment, Vec<u8>),
-    /// Reveal your indovidual salted for the vote you committed to
+    /// Reveal your individual salt for the vote you committed to
     RevealOneTimeSalt(Salt),
 }
 
@@ -117,6 +117,7 @@ impl Display for CorevoMessage {
         }
     }
 }
+
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
 pub struct CorevoVoteAndSalt {
     pub vote: CorevoVote,
@@ -126,6 +127,7 @@ pub struct CorevoVoteAndSalt {
 impl CorevoVoteAndSalt {
     pub fn commit(&self, maybe_common_salt: Option<Salt>) -> Commitment {
         let mut hasher = Blake2b512::new();
+        hasher.update(self.vote.encode());
         hasher.update(self.onetime_salt);
         if let Some(common_salt) = maybe_common_salt {
             hasher.update(common_salt);
