@@ -26,7 +26,7 @@ type AssetHubConfig = PolkadotConfig;
 
 /// we prefix our remarks with a unique byte sequence to identify them easily.
 const COREVO_REMARK_PREFIX: [u8; 3] = hex_literal::hex!("cc00ee");
-const CONTEXT: &str = "corevo_test_voting";
+const CONTEXT: &str = "corevo_test_voting_2";
 
 #[tokio::main]
 pub async fn main() {
@@ -55,7 +55,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     println!("⛓🗄️ fetching onchain history from indexer");
-    get_history().await.unwrap();
+    get_history(&everybody).await.unwrap();
     println!("⛓ Listening to System.Remark Extrinsics in new finalized blocks...");
 
     println!("*********** SETUP PHASE **************" );

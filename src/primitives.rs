@@ -126,6 +126,8 @@ pub struct CorevoVoteAndSalt {
 impl CorevoVoteAndSalt {
     pub fn commit(&self, maybe_common_salt: Option<Salt>) -> Commitment {
         let mut hasher = Blake2b512::new();
+        // Include the vote in the commitment to bind it cryptographically
+        hasher.update(self.vote.encode());
         hasher.update(self.onetime_salt);
         if let Some(common_salt) = maybe_common_salt {
             hasher.update(common_salt);
@@ -134,6 +136,21 @@ impl CorevoVoteAndSalt {
         let mut hash_bytes = [0u8; 32];
         hash_bytes.copy_from_slice(&hash[..32]);
         hash_bytes
+    }
+
+    /// Try to reveal the vote by brute-forcing all possible vote options against a commitment
+    pub fn reveal_vote_by_bruteforce(
+        onetime_salt: Salt,
+        common_salt: Salt,
+        commitment: Commitment,
+    ) -> Option<CorevoVote> {
+        for vote in [CorevoVote::Aye, CorevoVote::Nay, CorevoVote::Abstain] {
+            let candidate = CorevoVoteAndSalt { vote, onetime_salt };
+            if candidate.commit(Some(common_salt)) == commitment {
+                return Some(vote);
+            }
+        }
+        None
     }
 }
 
