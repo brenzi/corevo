@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /work log --oneline)",
+      "Bash(git -C /work show --stat 995fe51)",
+      "Bash(cargo check:*)",
+      "Bash(cargo:*)",
+      "Bash(rustc:*)",
+      "Bash(git -C /work diff)",
+      "Bash(git -C /work log --oneline -5)",
+      "Bash(grep:*)",
+      "Bash(tree:*)",
+      "WebFetch(domain:ratatui.rs)"
+    ]
+  }
+}

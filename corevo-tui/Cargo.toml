@@ -1,0 +1,34 @@
+[package]
+name = "corevo-tui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+corevo-lib = { path = "../corevo-lib" }
+
+# Async runtime
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+
+# TUI
+ratatui.workspace = true
+crossterm.workspace = true
+
+# Error handling
+color-eyre.workspace = true
+
+# Serialization (for config)
+serde.workspace = true
+serde_json.workspace = true
+
+# Logging
+log.workspace = true
+env_logger.workspace = true
+
+# Clipboard
+arboard = "3"
+
+# Crypto (for proposer functionality)
+rand.workspace = true
+x25519-dalek.workspace = true

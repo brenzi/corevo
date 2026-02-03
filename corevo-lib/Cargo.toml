@@ -1,0 +1,36 @@
+[package]
+name = "corevo-lib"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Substrate / Subxt
+subxt.workspace = true
+subxt-signer.workspace = true
+
+# Async runtime
+tokio.workspace = true
+futures.workspace = true
+
+# Crypto
+crypto_box.workspace = true
+x25519-dalek.workspace = true
+blake2.workspace = true
+rand.workspace = true
+
+# Encoding
+codec.workspace = true
+hex.workspace = true
+hex-literal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bs58 = "0.5"
+
+# Database
+mongodb.workspace = true
+
+# Logging
+log.workspace = true
+
+# Error handling
+thiserror.workspace = true
