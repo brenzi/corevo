@@ -12,7 +12,10 @@ use tokio::sync::mpsc;
 
 use action::Action;
 use app::{App, LoadingState, Screen};
-use components::{config::ConfigComponent, history::HistoryComponent, home::HomeComponent, propose::ProposeComponent, voting::VotingComponent};
+use components::{
+    config::ConfigComponent, history::HistoryComponent, home::HomeComponent,
+    propose::ProposeComponent, voting::VotingComponent,
+};
 use event::{Event, EventHandler};
 use tui::Tui;
 
@@ -37,14 +40,12 @@ async fn main() -> Result<()> {
     // Main event loop
     loop {
         // Draw UI
-        tui.draw(|frame| {
-            match app.screen {
-                Screen::Home => HomeComponent::render(&app, frame),
-                Screen::History => HistoryComponent::render(&app, frame),
-                Screen::Voting => VotingComponent::render(&app, frame),
-                Screen::Config => ConfigComponent::render(&app, frame),
-                Screen::Propose => ProposeComponent::render(&app, frame),
-            }
+        tui.draw(|frame| match app.screen {
+            Screen::Home => HomeComponent::render(&app, frame),
+            Screen::History => HistoryComponent::render(&app, frame),
+            Screen::Voting => VotingComponent::render(&app, frame),
+            Screen::Config => ConfigComponent::render(&app, frame),
+            Screen::Propose => ProposeComponent::render(&app, frame),
         })?;
 
         // Handle events and actions
@@ -77,10 +78,12 @@ async fn main() -> Result<()> {
                         if app.derived_address.is_some() {
                             let chain_url = app.config_form.chain_url.clone();
                             let secret_uri = app.secret_uri.clone();
+                            // Capture the ID that will be set after handle_action increments it
+                            let request_id = app.balance_request_id.wrapping_add(1);
                             let tx = action_tx.clone();
                             tokio::spawn(async move {
-                                let result = load_balance(&chain_url, &secret_uri).await;
-                                let _ = tx.send(Action::BalanceLoaded(result));
+                                let result = load_balance_with_retry(&chain_url, &secret_uri).await;
+                                let _ = tx.send(Action::BalanceLoaded(request_id, result));
                             });
                         }
                     }
@@ -88,6 +91,7 @@ async fn main() -> Result<()> {
                         let chain_url = app.config_form.chain_url.clone();
                         let secret_uri = app.secret_uri.clone();
                         let context_name = app.propose_form.context_name.clone();
+                        let use_common_salt = app.propose_form.use_common_salt;
                         let selected_voters: Vec<_> = app.propose_form.available_voters
                             .iter()
                             .filter(|v| v.selected)
@@ -95,7 +99,7 @@ async fn main() -> Result<()> {
                             .collect();
                         let tx = action_tx.clone();
                         tokio::spawn(async move {
-                            let result = propose_context(&chain_url, &secret_uri, &context_name, &selected_voters).await;
+                            let result = propose_context(&chain_url, &secret_uri, &context_name, &selected_voters, use_common_salt).await;
                             let _ = tx.send(Action::ProposeSubmitted(result));
                         });
                     }
@@ -228,41 +232,39 @@ fn handle_home_keys(app: &App, key: KeyEvent) -> Option<Action> {
             }
         }
         // Skip disabled items when navigating
-        KeyCode::Up | KeyCode::Char('k') => {
-            Some(Action::SelectIndex(app.prev_enabled_home_item(app.selected_index)))
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            Some(Action::SelectIndex(app.next_enabled_home_item(app.selected_index)))
-        }
-        KeyCode::Enter => {
-            match app.selected_index {
-                0 => Some(Action::NavigateHistory),
-                1 => {
-                    if can_use_chain {
-                        Some(Action::NavigateVoting)
-                    } else {
-                        None
-                    }
+        KeyCode::Up | KeyCode::Char('k') => Some(Action::SelectIndex(
+            app.prev_enabled_home_item(app.selected_index),
+        )),
+        KeyCode::Down | KeyCode::Char('j') => Some(Action::SelectIndex(
+            app.next_enabled_home_item(app.selected_index),
+        )),
+        KeyCode::Enter => match app.selected_index {
+            0 => Some(Action::NavigateHistory),
+            1 => {
+                if can_use_chain {
+                    Some(Action::NavigateVoting)
+                } else {
+                    None
                 }
-                2 => {
-                    if can_use_chain {
-                        Some(Action::NavigatePropose)
-                    } else {
-                        None
-                    }
-                }
-                3 => Some(Action::NavigateConfig),
-                4 => {
-                    if can_announce {
-                        Some(Action::AnnouncePubkey)
-                    } else {
-                        None
-                    }
-                }
-                5 => Some(Action::Quit),
-                _ => None,
             }
-        }
+            2 => {
+                if can_use_chain {
+                    Some(Action::NavigatePropose)
+                } else {
+                    None
+                }
+            }
+            3 => Some(Action::NavigateConfig),
+            4 => {
+                if can_announce {
+                    Some(Action::AnnouncePubkey)
+                } else {
+                    None
+                }
+            }
+            5 => Some(Action::Quit),
+            _ => None,
+        },
         KeyCode::Esc => Some(Action::ClearError),
         _ => None,
     }
@@ -305,7 +307,9 @@ fn handle_voting_keys(app: &App, key: KeyEvent) -> Option<Action> {
     if app.show_reveal_confirm {
         return match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => Some(Action::ConfirmReveal),
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Backspace => Some(Action::CancelReveal),
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Backspace => {
+                Some(Action::CancelReveal)
+            }
             _ => None,
         };
     }
@@ -360,7 +364,9 @@ fn handle_voting_keys(app: &App, key: KeyEvent) -> Option<Action> {
                 match key.code {
                     KeyCode::Esc => Some(Action::NavigateHome),
                     KeyCode::Backspace => Some(Action::SelectContext(None)),
-                    KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => Some(Action::ShowRevealConfirm),
+                    KeyCode::Enter | KeyCode::Char('r') | KeyCode::Char('R') => {
+                        Some(Action::ShowRevealConfirm)
+                    }
                     _ => None,
                 }
             }
@@ -386,11 +392,9 @@ fn handle_voting_keys(app: &App, key: KeyEvent) -> Option<Action> {
                 } else if app.history_loading == LoadingState::Loaded {
                     // Select the highlighted context
                     let pending = app.get_pending_vote_contexts();
-                    if let Some(ctx) = pending.get(app.selected_index) {
-                        Some(Action::SelectContext(Some((*ctx).clone())))
-                    } else {
-                        None
-                    }
+                    pending
+                        .get(app.selected_index)
+                        .map(|ctx| Action::SelectContext(Some((*ctx).clone())))
                 } else {
                     None
                 }
@@ -419,13 +423,13 @@ fn handle_config_keys(_app: &App, key: KeyEvent) -> Option<Action> {
         }
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Paste from clipboard
-            if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                if let Ok(text) = clipboard.get_text() {
-                    // Clean the text - remove newlines, trim whitespace
-                    let clean_text = text.trim().replace('\n', "").replace('\r', "");
-                    if !clean_text.is_empty() {
-                        return Some(Action::InputPaste(clean_text));
-                    }
+            if let Ok(mut clipboard) = arboard::Clipboard::new()
+                && let Ok(text) = clipboard.get_text()
+            {
+                // Clean the text - remove newlines, trim whitespace
+                let clean_text = text.trim().replace(['\n', '\r'], "");
+                if !clean_text.is_empty() {
+                    return Some(Action::InputPaste(clean_text));
                 }
             }
             None
@@ -440,7 +444,12 @@ fn handle_config_keys(_app: &App, key: KeyEvent) -> Option<Action> {
 fn handle_propose_keys(app: &App, key: KeyEvent) -> Option<Action> {
     use crate::app::ProposeField;
 
-    let selected_count = app.propose_form.available_voters.iter().filter(|v| v.selected).count();
+    let selected_count = app
+        .propose_form
+        .available_voters
+        .iter()
+        .filter(|v| v.selected)
+        .count();
     let can_submit = app.derived_address.is_some()
         && !app.propose_form.context_name.is_empty()
         && selected_count > 0;
@@ -455,6 +464,7 @@ fn handle_propose_keys(app: &App, key: KeyEvent) -> Option<Action> {
         // Space toggles voter selection or activates button
         KeyCode::Char(' ') => match app.propose_form.focused_field {
             ProposeField::ContextName => Some(Action::InputChar(' ')),
+            ProposeField::UseCommonSalt => Some(Action::ToggleUseCommonSalt),
             ProposeField::Voter(idx) => Some(Action::ToggleVoter(idx)),
             ProposeField::CreateButton if can_submit => Some(Action::ProposeContext),
             _ => None,
@@ -462,6 +472,7 @@ fn handle_propose_keys(app: &App, key: KeyEvent) -> Option<Action> {
 
         // Enter toggles voter or activates button
         KeyCode::Enter => match app.propose_form.focused_field {
+            ProposeField::UseCommonSalt => Some(Action::ToggleUseCommonSalt),
             ProposeField::Voter(idx) => Some(Action::ToggleVoter(idx)),
             ProposeField::CreateButton if can_submit => Some(Action::ProposeContext),
             _ => None,
@@ -487,14 +498,13 @@ fn handle_propose_keys(app: &App, key: KeyEvent) -> Option<Action> {
 
         // Ctrl+V pastes (only in name field)
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if matches!(app.propose_form.focused_field, ProposeField::ContextName) {
-                if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    if let Ok(text) = clipboard.get_text() {
-                        let clean_text = text.trim().replace('\n', "").replace('\r', "");
-                        if !clean_text.is_empty() {
-                            return Some(Action::InputPaste(clean_text));
-                        }
-                    }
+            if matches!(app.propose_form.focused_field, ProposeField::ContextName)
+                && let Ok(mut clipboard) = arboard::Clipboard::new()
+                && let Ok(text) = clipboard.get_text()
+            {
+                let clean_text = text.trim().replace(['\n', '\r'], "");
+                if !clean_text.is_empty() {
+                    return Some(Action::InputPaste(clean_text));
                 }
             }
             None
@@ -534,20 +544,22 @@ fn handle_propose_keys(app: &App, key: KeyEvent) -> Option<Action> {
 /// Handle mouse events - returns actions to execute
 fn handle_mouse_event(app: &App, mouse: MouseEvent) -> Vec<Action> {
     match mouse.kind {
-        MouseEventKind::Down(MouseButton::Left) => {
-            handle_mouse_click(app, mouse.row, mouse.column)
-        }
+        MouseEventKind::Down(MouseButton::Left) => handle_mouse_click(app, mouse.row, mouse.column),
         // Scroll wheel navigation - skip disabled items on home screen
         MouseEventKind::ScrollUp => {
             if app.screen == Screen::Home {
-                vec![Action::SelectIndex(app.prev_enabled_home_item(app.selected_index))]
+                vec![Action::SelectIndex(
+                    app.prev_enabled_home_item(app.selected_index),
+                )]
             } else {
                 vec![Action::SelectPrev]
             }
         }
         MouseEventKind::ScrollDown => {
             if app.screen == Screen::Home {
-                vec![Action::SelectIndex(app.next_enabled_home_item(app.selected_index))]
+                vec![Action::SelectIndex(
+                    app.next_enabled_home_item(app.selected_index),
+                )]
             } else {
                 vec![Action::SelectNext]
             }
@@ -571,11 +583,11 @@ fn handle_mouse_click(app: &App, row: u16, col: u16) -> Vec<Action> {
             let account_row = info_start + 1 + 3; // border + chain + db + blank
 
             // Check if click is on account line (to copy address)
-            if r == account_row {
-                if let Some(ref address) = app.derived_address {
-                    actions.push(Action::CopyAddress(address.clone()));
-                    return actions;
-                }
+            if r == account_row
+                && let Some(ref address) = app.derived_address
+            {
+                actions.push(Action::CopyAddress(address.clone()));
+                return actions;
             }
 
             // Menu starts after info box
@@ -624,11 +636,11 @@ fn handle_mouse_click(app: &App, row: u16, col: u16) -> Vec<Action> {
             let account_address_row = account_pane_start + 1; // border + content
 
             // Check if click is on account address line (to copy)
-            if r == account_address_row {
-                if let Some(ref address) = app.derived_address {
-                    actions.push(Action::CopyAddress(address.clone()));
-                    return actions;
-                }
+            if r == account_address_row
+                && let Some(ref address) = app.derived_address
+            {
+                actions.push(Action::CopyAddress(address.clone()));
+                return actions;
             }
 
             // Content area: list on left (40%) with border
@@ -651,11 +663,12 @@ fn handle_mouse_click(app: &App, row: u16, col: u16) -> Vec<Action> {
             let account_row = status_area_start + 1; // border + first content line
 
             // Check if click is on account line (to copy) - only in context selection mode
-            if app.selected_context.is_none() && r == account_row {
-                if let Some(ref address) = app.derived_address {
-                    actions.push(Action::CopyAddress(address.clone()));
-                    return actions;
-                }
+            if app.selected_context.is_none()
+                && r == account_row
+                && let Some(ref address) = app.derived_address
+            {
+                actions.push(Action::CopyAddress(address.clone()));
+                return actions;
             }
 
             // Vote options have border, items start at row: 1+3+6+1 = 11
@@ -691,7 +704,7 @@ fn handle_mouse_click(app: &App, row: u16, col: u16) -> Vec<Action> {
                     // Get the voter's full address for copying
                     let address = corevo_lib::format_account_ss58(
                         &app.propose_form.available_voters[voter_idx].account_id.0,
-                        ss58_prefix
+                        ss58_prefix,
                     );
                     actions.push(Action::CopyAddress(address));
                     return actions;
@@ -706,21 +719,46 @@ fn handle_mouse_click(app: &App, row: u16, col: u16) -> Vec<Action> {
 }
 
 /// Async function to load history from indexer
-async fn load_history(config: &corevo_lib::Config, secret_uri: Option<&str>) -> Result<corevo_lib::VotingHistory, String> {
+async fn load_history(
+    config: &corevo_lib::Config,
+    secret_uri: Option<&str>,
+) -> Result<corevo_lib::VotingHistory, String> {
     let mut query = corevo_lib::HistoryQuery::new(config);
 
     // If we have a secret URI, derive the account for decryption
-    if let Some(uri) = secret_uri {
-        if !uri.is_empty() {
-            if let Ok(account) = corevo_lib::derive_account_from_uri(uri) {
-                query = query.with_known_accounts(vec![account]);
+    if let Some(uri) = secret_uri
+        && !uri.is_empty()
+        && let Ok(account) = corevo_lib::derive_account_from_uri(uri)
+    {
+        query = query.with_known_accounts(vec![account]);
+    }
+
+    query.execute().await.map_err(|e| e.to_string())
+}
+
+/// Async function to load account balance from chain with retry logic
+async fn load_balance_with_retry(chain_url: &str, secret_uri: &str) -> Result<u128, String> {
+    const MAX_RETRIES: u32 = 3;
+    const RETRY_DELAY_MS: u64 = 500;
+
+    let mut last_error = String::new();
+
+    for attempt in 0..MAX_RETRIES {
+        match load_balance(chain_url, secret_uri).await {
+            Ok(balance) => return Ok(balance),
+            Err(e) => {
+                last_error = e;
+                if attempt + 1 < MAX_RETRIES {
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        RETRY_DELAY_MS * (attempt as u64 + 1),
+                    ))
+                    .await;
+                }
             }
         }
     }
 
-    query.execute()
-        .await
-        .map_err(|e| e.to_string())
+    Err(last_error)
 }
 
 /// Async function to load account balance from chain
@@ -728,8 +766,7 @@ async fn load_balance(chain_url: &str, secret_uri: &str) -> Result<u128, String>
     use corevo_lib::{ChainClient, derive_account_from_uri};
 
     // Derive account to get the account ID
-    let account = derive_account_from_uri(secret_uri)
-        .map_err(|e| e.to_string())?;
+    let account = derive_account_from_uri(secret_uri).map_err(|e| e.to_string())?;
     let account_id = account.sr25519_keypair.public_key().to_account_id();
 
     // Connect to chain and fetch balance
@@ -737,15 +774,18 @@ async fn load_balance(chain_url: &str, secret_uri: &str) -> Result<u128, String>
         .await
         .map_err(|e| e.to_string())?;
 
-    client.get_account_balance(&account_id)
+    client
+        .get_account_balance(&account_id)
         .await
         .map_err(|e| e.to_string())
 }
 
 /// Async function to load available voters (accounts with announced X25519 pubkeys)
-async fn load_available_voters(config: &corevo_lib::Config) -> Result<Vec<crate::app::AvailableVoter>, String> {
-    use corevo_lib::HistoryQuery;
+async fn load_available_voters(
+    config: &corevo_lib::Config,
+) -> Result<Vec<crate::app::AvailableVoter>, String> {
     use crate::app::AvailableVoter;
+    use corevo_lib::HistoryQuery;
 
     let history = HistoryQuery::new(config)
         .execute()
@@ -770,18 +810,21 @@ async fn propose_context(
     chain_url: &str,
     secret_uri: &str,
     context_name: &str,
-    selected_voters: &[(corevo_lib::HashableAccountId, corevo_lib::PublicKeyForEncryption)],
+    selected_voters: &[(
+        corevo_lib::HashableAccountId,
+        corevo_lib::PublicKeyForEncryption,
+    )],
+    use_common_salt: bool,
 ) -> Result<(), String> {
     use corevo_lib::{
-        ChainClient, derive_account_from_uri, encrypt_for_recipient,
-        CorevoContext, CorevoMessage, CorevoRemark, CorevoRemarkV1, PrefixedCorevoRemark,
+        ChainClient, CorevoContext, CorevoMessage, CorevoRemark, CorevoRemarkV1,
+        PrefixedCorevoRemark, derive_account_from_uri, encrypt_for_recipient,
     };
     use rand::{RngCore, thread_rng};
     use x25519_dalek::PublicKey as X25519PublicKey;
 
     // Derive account for signing and encryption
-    let account = derive_account_from_uri(secret_uri)
-        .map_err(|e| e.to_string())?;
+    let account = derive_account_from_uri(secret_uri).map_err(|e| e.to_string())?;
 
     // Create the context - use Bytes if hex string, otherwise String
     let context = if context_name.starts_with("0x") || context_name.starts_with("0X") {
@@ -807,32 +850,39 @@ async fn propose_context(
         msg: announce_msg,
     }));
 
-    client.send_remark(&account.sr25519_keypair, announce_remark)
+    client
+        .send_remark(&account.sr25519_keypair, announce_remark)
         .await
         .map_err(|e| format!("Failed to announce pubkey: {}", e))?;
 
-    // Step 2: Generate a common salt for this voting session
-    let mut common_salt = [0u8; 32];
-    thread_rng().fill_bytes(&mut common_salt);
+    // Step 2 & 3: Only if using common salt - generate and send encrypted invites
+    if use_common_salt {
+        // Generate a common salt for this voting session
+        let mut common_salt = [0u8; 32];
+        thread_rng().fill_bytes(&mut common_salt);
 
-    // Step 3: Invite each selected voter by sending encrypted common salt
-    for (voter_account_id, voter_pubkey_bytes) in selected_voters {
-        let voter_pubkey = X25519PublicKey::from(*voter_pubkey_bytes);
+        // Invite each selected voter by sending encrypted common salt
+        for (voter_account_id, voter_pubkey_bytes) in selected_voters {
+            let voter_pubkey = X25519PublicKey::from(*voter_pubkey_bytes);
 
-        // Encrypt the common salt for this voter
-        let encrypted_salt = encrypt_for_recipient(&account.x25519_secret, &voter_pubkey, &common_salt)
-            .map_err(|e| format!("Failed to encrypt for voter: {}", e))?;
+            // Encrypt the common salt for this voter
+            let encrypted_salt =
+                encrypt_for_recipient(&account.x25519_secret, &voter_pubkey, &common_salt)
+                    .map_err(|e| format!("Failed to encrypt for voter: {}", e))?;
 
-        let invite_msg = CorevoMessage::InviteVoter(voter_account_id.0.clone(), encrypted_salt);
-        let invite_remark = PrefixedCorevoRemark::from(CorevoRemark::V1(CorevoRemarkV1 {
-            context: context.clone(),
-            msg: invite_msg,
-        }));
+            let invite_msg = CorevoMessage::InviteVoter(voter_account_id.0.clone(), encrypted_salt);
+            let invite_remark = PrefixedCorevoRemark::from(CorevoRemark::V1(CorevoRemarkV1 {
+                context: context.clone(),
+                msg: invite_msg,
+            }));
 
-        client.send_remark(&account.sr25519_keypair, invite_remark)
-            .await
-            .map_err(|e| format!("Failed to invite voter: {}", e))?;
+            client
+                .send_remark(&account.sr25519_keypair, invite_remark)
+                .await
+                .map_err(|e| format!("Failed to invite voter: {}", e))?;
+        }
     }
+    // If not using common salt, the context is public - anyone can vote without invitation
 
     Ok(())
 }
@@ -846,19 +896,18 @@ async fn commit_vote(
     config: &corevo_lib::Config,
 ) -> Result<(), String> {
     use codec::{Decode, Encode};
-    use corevo_lib::{
-        ChainClient, CorevoMessage, CorevoRemark, CorevoRemarkV1,
-        CorevoVoteAndSalt, HashableAccountId, HistoryQuery, PrefixedCorevoRemark,
-        derive_account_from_uri, decrypt_from_sender, encrypt_for_recipient,
-        format_account_ss58, ss58_prefix_for_chain,
-    };
     #[allow(unused_imports)]
     use corevo_lib::Salt;
+    use corevo_lib::{
+        ChainClient, CorevoMessage, CorevoRemark, CorevoRemarkV1, CorevoVoteAndSalt,
+        HashableAccountId, HistoryQuery, PrefixedCorevoRemark, decrypt_from_sender,
+        derive_account_from_uri, encrypt_for_recipient, format_account_ss58, ss58_prefix_for_chain,
+    };
     use futures::TryStreamExt;
     use mongodb::{
-        bson::{doc, Bson, Document},
-        options::ClientOptions,
         Client,
+        bson::{Bson, Document, doc},
+        options::ClientOptions,
     };
     use rand::{RngCore, thread_rng};
     use x25519_dalek::PublicKey as X25519PublicKey;
@@ -866,13 +915,11 @@ async fn commit_vote(
     let context = context.ok_or("No voting context selected")?;
 
     // Derive account for signing and encryption
-    let account = derive_account_from_uri(secret_uri)
-        .map_err(|e| e.to_string())?;
+    let account = derive_account_from_uri(secret_uri).map_err(|e| e.to_string())?;
     let my_account_id = account.sr25519_keypair.public_key().to_account_id();
 
     // First try: Query history to see if common salt is already decrypted (works if we're the proposer)
-    let account_for_query = derive_account_from_uri(secret_uri)
-        .map_err(|e| e.to_string())?;
+    let account_for_query = derive_account_from_uri(secret_uri).map_err(|e| e.to_string())?;
 
     let full_history = HistoryQuery::new(config)
         .with_context(context.clone())
@@ -881,108 +928,128 @@ async fn commit_vote(
         .await
         .map_err(|e| e.to_string())?;
 
-    let full_summary = full_history.contexts.get(&context)
-        .ok_or("Context not found in history")?;
+    // Try to get the common salt - might be empty for public contexts or if we're not the proposer
+    let maybe_common_salt: Option<[u8; 32]> =
+        if let Some(full_summary) = full_history.contexts.get(&context) {
+            if let Some(salt) = full_summary.common_salts.first() {
+                Some(*salt)
+            } else if full_summary.voters.is_empty() {
+                // Public context - no common salt needed
+                None
+            } else {
+                // We're not the proposer - need to decrypt our invite manually
+                // Get the proposer's public key
+                let proposer_pubkey_bytes = full_history
+                    .voter_pubkeys
+                    .get(&HashableAccountId::from(full_summary.proposer.clone()))
+                    .ok_or("Proposer's public key not found")?;
+                let proposer_pubkey = X25519PublicKey::from(*proposer_pubkey_bytes);
 
-    // Try to get the common salt - might be empty if we're not the proposer
-    let common_salt: [u8; 32] = if let Some(salt) = full_summary.common_salts.first() {
-        *salt
-    } else {
-        // We're not the proposer - need to decrypt our invite manually
-        // Get the proposer's public key
-        let proposer_pubkey_bytes = full_history.voter_pubkeys
-            .get(&HashableAccountId::from(full_summary.proposer.clone()))
-            .ok_or("Proposer's public key not found")?;
-        let proposer_pubkey = X25519PublicKey::from(*proposer_pubkey_bytes);
+                // Query MongoDB to find the InviteVoter message for us
+                let ss58_prefix = ss58_prefix_for_chain(chain_url);
+                let my_ss58_address = format_account_ss58(&my_account_id, ss58_prefix);
 
-        // Query MongoDB to find the InviteVoter message for us
-        let ss58_prefix = ss58_prefix_for_chain(chain_url);
-        let my_ss58_address = format_account_ss58(&my_account_id, ss58_prefix);
+                let mut client_options: ClientOptions = ClientOptions::parse(&config.mongodb_uri)
+                    .await
+                    .map_err(|e: mongodb::error::Error| e.to_string())?;
+                client_options.app_name = Some("corevo-tui".to_string());
+                let mongo_client = Client::with_options(client_options)
+                    .map_err(|e: mongodb::error::Error| e.to_string())?;
 
-        let mut client_options: ClientOptions = ClientOptions::parse(&config.mongodb_uri)
-            .await
-            .map_err(|e: mongodb::error::Error| e.to_string())?;
-        client_options.app_name = Some("corevo-tui".to_string());
-        let mongo_client = Client::with_options(client_options)
-            .map_err(|e: mongodb::error::Error| e.to_string())?;
+                let db = mongo_client.database(&config.mongodb_db);
+                let coll = db.collection::<Document>("extrinsics");
 
-        let db = mongo_client.database(&config.mongodb_db);
-        let coll = db.collection::<Document>("extrinsics");
+                // Query for InviteVoter messages in this context
+                let filter = doc! {
+                    "method": "remark",
+                    "args.remark": { "$regex": "^0xcc00ee", "$options": "i" },
+                };
 
-        // Query for InviteVoter messages in this context
-        let filter = doc! {
-            "method": "remark",
-            "args.remark": { "$regex": "^0xcc00ee", "$options": "i" },
-        };
+                let mut cursor = coll
+                    .find(filter)
+                    .await
+                    .map_err(|e: mongodb::error::Error| e.to_string())?;
 
-        let mut cursor = coll.find(filter)
-            .await
-            .map_err(|e: mongodb::error::Error| e.to_string())?;
+                let mut encrypted_salt: Option<Vec<u8>> = None;
 
-        let mut encrypted_salt: Option<Vec<u8>> = None;
+                while let Some(doc_result) = cursor
+                    .try_next()
+                    .await
+                    .map_err(|e: mongodb::error::Error| e.to_string())?
+                {
+                    let remark = doc_result
+                        .get_document("args")
+                        .ok()
+                        .and_then(|args: &Document| args.get("remark"))
+                        .and_then(|v| match v {
+                            Bson::String(s) => Some(s.as_str()),
+                            _ => None,
+                        });
 
-        while let Some(doc_result) = cursor.try_next().await.map_err(|e: mongodb::error::Error| e.to_string())? {
-            let remark = doc_result
-                .get_document("args")
-                .ok()
-                .and_then(|args: &Document| args.get("remark"))
-                .and_then(|v| match v {
-                    Bson::String(s) => Some(s.as_str()),
-                    _ => None,
-                });
+                    let Some(remark_hex) = remark else { continue };
+                    let Ok(remark_bytes) = corevo_lib::primitives::decode_hex(remark_hex) else {
+                        continue;
+                    };
+                    let Ok(prefixed) = PrefixedCorevoRemark::decode(&mut remark_bytes.as_slice())
+                    else {
+                        continue;
+                    };
 
-            let Some(remark_hex) = remark else { continue };
-            let Ok(remark_bytes) = corevo_lib::primitives::decode_hex(remark_hex) else { continue };
-            let Ok(prefixed) = PrefixedCorevoRemark::decode(&mut remark_bytes.as_slice()) else { continue };
+                    #[allow(irrefutable_let_patterns)]
+                    let CorevoRemark::V1(CorevoRemarkV1 {
+                        context: msg_ctx,
+                        msg,
+                    }) = prefixed.0
+                    else {
+                        continue;
+                    };
 
-            #[allow(irrefutable_let_patterns)]
-            let CorevoRemark::V1(CorevoRemarkV1 { context: msg_ctx, msg }) = prefixed.0 else { continue };
+                    // Check if this is for our context
+                    if msg_ctx != context {
+                        continue;
+                    }
 
-            // Check if this is for our context
-            if msg_ctx != context { continue }
-
-            // Check if this is an InviteVoter message for us
-            if let CorevoMessage::InviteVoter(voter_id, enc_salt) = msg {
-                // Check if this invite is for us (compare SS58 addresses)
-                let voter_ss58 = format_account_ss58(&voter_id, ss58_prefix);
-                if voter_ss58 == my_ss58_address {
-                    encrypted_salt = Some(enc_salt);
-                    break;
+                    // Check if this is an InviteVoter message for us
+                    if let CorevoMessage::InviteVoter(voter_id, enc_salt) = msg {
+                        // Check if this invite is for us (compare SS58 addresses)
+                        let voter_ss58 = format_account_ss58(&voter_id, ss58_prefix);
+                        if voter_ss58 == my_ss58_address {
+                            encrypted_salt = Some(enc_salt);
+                            break;
+                        }
+                    }
                 }
+
+                let encrypted_salt =
+                    encrypted_salt.ok_or("No invite found for your account in this context")?;
+
+                // Decrypt the common salt using our secret + proposer's public key
+                let decrypted =
+                    decrypt_from_sender(&account.x25519_secret, &proposer_pubkey, &encrypted_salt)
+                        .map_err(|e| format!("Failed to decrypt common salt: {}", e))?;
+
+                if decrypted.len() != 32 {
+                    return Err("Decrypted salt has wrong length".to_string());
+                }
+
+                let mut salt = [0u8; 32];
+                salt.copy_from_slice(&decrypted);
+                Some(salt)
             }
-        }
-
-        let encrypted_salt = encrypted_salt
-            .ok_or("No invite found for your account in this context")?;
-
-        // Decrypt the common salt using our secret + proposer's public key
-        let decrypted = decrypt_from_sender(
-            &account.x25519_secret,
-            &proposer_pubkey,
-            &encrypted_salt,
-        ).map_err(|e| format!("Failed to decrypt common salt: {}", e))?;
-
-        if decrypted.len() != 32 {
-            return Err("Decrypted salt has wrong length".to_string());
-        }
-
-        let mut salt = [0u8; 32];
-        salt.copy_from_slice(&decrypted);
-        salt
-    };
+        } else {
+            // Context not found in history - assume public context
+            None
+        };
 
     // Generate one-time salt for this vote
     let mut onetime_salt = [0u8; 32];
     thread_rng().fill_bytes(&mut onetime_salt);
 
     // Create the vote+salt structure
-    let vote_and_salt = CorevoVoteAndSalt {
-        vote,
-        onetime_salt,
-    };
+    let vote_and_salt = CorevoVoteAndSalt { vote, onetime_salt };
 
-    // Generate commitment hash
-    let commitment = vote_and_salt.commit(Some(common_salt));
+    // Generate commitment hash (with or without common salt)
+    let commitment = vote_and_salt.commit(maybe_common_salt);
 
     // Encrypt vote+salt for self-recovery (using our own public key)
     let vote_and_salt_bytes = vote_and_salt.encode();
@@ -990,7 +1057,8 @@ async fn commit_vote(
         &account.x25519_secret,
         &account.x25519_public,
         &vote_and_salt_bytes,
-    ).map_err(|e| format!("Failed to encrypt vote: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to encrypt vote: {}", e))?;
 
     // Connect to chain
     let client = ChainClient::connect(chain_url)
@@ -1004,7 +1072,8 @@ async fn commit_vote(
         msg: commit_msg,
     }));
 
-    client.send_remark(&account.sr25519_keypair, commit_remark)
+    client
+        .send_remark(&account.sr25519_keypair, commit_remark)
         .await
         .map_err(|e| format!("Failed to commit vote: {}", e))?;
 
@@ -1021,21 +1090,20 @@ async fn reveal_vote(
     use codec::Decode;
     use corevo_lib::{
         ChainClient, CorevoMessage, CorevoRemark, CorevoRemarkV1, CorevoVoteAndSalt,
-        PrefixedCorevoRemark, derive_account_from_uri, decrypt_from_sender,
-        format_account_ss58, ss58_prefix_for_chain,
+        PrefixedCorevoRemark, decrypt_from_sender, derive_account_from_uri, format_account_ss58,
+        ss58_prefix_for_chain,
     };
     use futures::TryStreamExt;
     use mongodb::{
-        bson::{doc, Bson, Document},
-        options::ClientOptions,
         Client,
+        bson::{Bson, Document, doc},
+        options::ClientOptions,
     };
 
     let context = context.ok_or("No voting context selected")?;
 
     // Derive account for signing and decryption
-    let account = derive_account_from_uri(secret_uri)
-        .map_err(|e| e.to_string())?;
+    let account = derive_account_from_uri(secret_uri).map_err(|e| e.to_string())?;
     let my_account_id = account.sr25519_keypair.public_key().to_account_id();
 
     // Convert to SS58 format (that's how it's stored in MongoDB)
@@ -1048,8 +1116,8 @@ async fn reveal_vote(
         .await
         .map_err(|e: mongodb::error::Error| e.to_string())?;
     client_options.app_name = Some("corevo-tui".to_string());
-    let mongo_client = Client::with_options(client_options)
-        .map_err(|e: mongodb::error::Error| e.to_string())?;
+    let mongo_client =
+        Client::with_options(client_options).map_err(|e: mongodb::error::Error| e.to_string())?;
 
     let db = mongo_client.database(&config.mongodb_db);
     let coll = db.collection::<Document>("extrinsics");
@@ -1061,14 +1129,19 @@ async fn reveal_vote(
         "signer.Id": &my_ss58_address,
     };
 
-    let mut cursor = coll.find(filter)
+    let mut cursor = coll
+        .find(filter)
         .await
         .map_err(|e: mongodb::error::Error| e.to_string())?;
 
     let mut encrypted_vote_and_salt: Option<Vec<u8>> = None;
 
     // Find our Commit message for this context
-    while let Some(doc) = cursor.try_next().await.map_err(|e: mongodb::error::Error| e.to_string())? {
+    while let Some(doc) = cursor
+        .try_next()
+        .await
+        .map_err(|e: mongodb::error::Error| e.to_string())?
+    {
         let remark = doc
             .get_document("args")
             .ok()
@@ -1079,14 +1152,26 @@ async fn reveal_vote(
             });
 
         let Some(remark_hex) = remark else { continue };
-        let Ok(remark_bytes) = corevo_lib::primitives::decode_hex(remark_hex) else { continue };
-        let Ok(prefixed) = PrefixedCorevoRemark::decode(&mut remark_bytes.as_slice()) else { continue };
+        let Ok(remark_bytes) = corevo_lib::primitives::decode_hex(remark_hex) else {
+            continue;
+        };
+        let Ok(prefixed) = PrefixedCorevoRemark::decode(&mut remark_bytes.as_slice()) else {
+            continue;
+        };
 
         #[allow(irrefutable_let_patterns)]
-        let CorevoRemark::V1(CorevoRemarkV1 { context: msg_ctx, msg }) = prefixed.0 else { continue };
+        let CorevoRemark::V1(CorevoRemarkV1 {
+            context: msg_ctx,
+            msg,
+        }) = prefixed.0
+        else {
+            continue;
+        };
 
         // Check if this is for our context
-        if msg_ctx != context { continue }
+        if msg_ctx != context {
+            continue;
+        }
 
         // Check if this is a Commit message
         if let CorevoMessage::Commit(_commitment, encrypted) = msg {
@@ -1095,15 +1180,16 @@ async fn reveal_vote(
         }
     }
 
-    let encrypted_vote_and_salt = encrypted_vote_and_salt
-        .ok_or("Your commit message was not found on chain")?;
+    let encrypted_vote_and_salt =
+        encrypted_vote_and_salt.ok_or("Your commit message was not found on chain")?;
 
     // Decrypt the vote+salt using our own key
     let decrypted = decrypt_from_sender(
         &account.x25519_secret,
         &account.x25519_public,
         &encrypted_vote_and_salt,
-    ).map_err(|e| format!("Failed to decrypt vote: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to decrypt vote: {}", e))?;
 
     // Decode the vote+salt
     let vote_and_salt = CorevoVoteAndSalt::decode(&mut decrypted.as_slice())
@@ -1121,7 +1207,8 @@ async fn reveal_vote(
         msg: reveal_msg,
     }));
 
-    client.send_remark(&account.sr25519_keypair, reveal_remark)
+    client
+        .send_remark(&account.sr25519_keypair, reveal_remark)
         .await
         .map_err(|e| format!("Failed to reveal vote: {}", e))?;
 
@@ -1129,18 +1216,14 @@ async fn reveal_vote(
 }
 
 /// Async function to announce X25519 public key on chain
-async fn announce_pubkey(
-    chain_url: &str,
-    secret_uri: &str,
-) -> Result<(), String> {
+async fn announce_pubkey(chain_url: &str, secret_uri: &str) -> Result<(), String> {
     use corevo_lib::{
         ChainClient, CorevoContext, CorevoMessage, CorevoRemark, CorevoRemarkV1,
         PrefixedCorevoRemark, derive_account_from_uri,
     };
 
     // Derive account for signing
-    let account = derive_account_from_uri(secret_uri)
-        .map_err(|e| e.to_string())?;
+    let account = derive_account_from_uri(secret_uri).map_err(|e| e.to_string())?;
 
     // Connect to chain
     let client = ChainClient::connect(chain_url)
@@ -1155,7 +1238,8 @@ async fn announce_pubkey(
         msg: announce_msg,
     }));
 
-    client.send_remark(&account.sr25519_keypair, announce_remark)
+    client
+        .send_remark(&account.sr25519_keypair, announce_remark)
         .await
         .map_err(|e| format!("Failed to announce pubkey: {}", e))?;
 

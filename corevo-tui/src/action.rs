@@ -1,8 +1,9 @@
-use corevo_lib::{CorevoContext, VotingHistory};
 use crate::app::AvailableVoter;
+use corevo_lib::{CorevoContext, VotingHistory};
 
 /// Actions that can be dispatched to update application state (Elm architecture)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Action {
     // Navigation
     NavigateHome,
@@ -30,7 +31,7 @@ pub enum Action {
 
     // Balance actions
     LoadBalance,
-    BalanceLoaded(Result<u128, String>),
+    BalanceLoaded(u64, Result<u128, String>), // (request_id, result)
 
     // Config actions
     SaveConfig,
@@ -71,6 +72,7 @@ pub enum Action {
     LoadVoters,
     VotersLoaded(Result<Vec<AvailableVoter>, String>),
     ToggleVoter(usize),
+    ToggleUseCommonSalt,
     SelectAllVoters,
     NextProposeField,
     PrevProposeField,

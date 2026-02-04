@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use corevo_lib::{AccountId32, Config, CorevoContext, VotingHistory, VoteStatus, ss58_prefix_for_chain, format_balance, token_info_for_chain, PublicKeyForEncryption, HashableAccountId};
+use corevo_lib::{
+    AccountId32, Config, CorevoContext, HashableAccountId, PublicKeyForEncryption, VoteStatus,
+    VotingHistory, format_balance, ss58_prefix_for_chain, token_info_for_chain,
+};
 use tokio::sync::mpsc;
 
 use crate::action::Action;
@@ -54,6 +57,9 @@ pub struct App {
 
     /// Balance loading state
     pub balance_loading: LoadingState,
+
+    /// Request ID for balance loading (to ignore stale responses)
+    pub balance_request_id: u64,
 
     /// Voting history (loaded from indexer)
     pub history: Option<VotingHistory>,
@@ -120,18 +126,33 @@ pub struct AvailableVoter {
 pub enum ProposeField {
     #[default]
     ContextName,
+    UseCommonSalt,
     Voter(usize),
     CreateButton,
 }
 
 /// Form state for creating new voting context
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ProposeForm {
     pub context_name: String,
     /// Available voters (accounts with announced X25519 pubkeys)
     pub available_voters: Vec<AvailableVoter>,
     /// Currently focused field
     pub focused_field: ProposeField,
+    /// Whether to use a common salt (encrypted for each voter)
+    /// When false, votes can be publicly revealed without the proposer's secret
+    pub use_common_salt: bool,
+}
+
+impl Default for ProposeForm {
+    fn default() -> Self {
+        Self {
+            context_name: String::new(),
+            available_voters: Vec::new(),
+            focused_field: ProposeField::default(),
+            use_common_salt: true, // Enable by default to hide votes from public
+        }
+    }
 }
 
 impl App {
@@ -154,6 +175,7 @@ impl App {
             current_account_id: None,
             balance: None,
             balance_loading: LoadingState::Idle,
+            balance_request_id: 0,
             history: None,
             history_loading: LoadingState::Idle,
             selected_context: None,
@@ -188,7 +210,8 @@ impl App {
             match corevo_lib::derive_account_from_uri(&self.secret_uri) {
                 Ok(account) => {
                     let account_id = account.sr25519_keypair.public_key().to_account_id();
-                    self.derived_address = Some(corevo_lib::format_account_ss58(&account_id, prefix));
+                    self.derived_address =
+                        Some(corevo_lib::format_account_ss58(&account_id, prefix));
                     self.current_account_id = Some(account_id);
                     // Trigger balance load
                     let _ = self.action_tx.send(Action::LoadBalance);
@@ -268,7 +291,10 @@ impl App {
                 self.screen = Screen::Voting;
                 self.selected_index = 0;
                 // Auto-load history when navigating to voting if not already loaded
-                if self.history.is_none() && self.history_loading == LoadingState::Idle && !self.secret_uri.is_empty() {
+                if self.history.is_none()
+                    && self.history_loading == LoadingState::Idle
+                    && !self.secret_uri.is_empty()
+                {
                     let _ = self.action_tx.send(Action::LoadHistory);
                 }
             }
@@ -281,7 +307,9 @@ impl App {
                 self.propose_loading = LoadingState::Idle;
                 self.propose_form.focused_field = ProposeField::ContextName;
                 // Auto-load available voters if not already loaded
-                if self.propose_form.available_voters.is_empty() && self.voters_loading == LoadingState::Idle {
+                if self.propose_form.available_voters.is_empty()
+                    && self.voters_loading == LoadingState::Idle
+                {
                     let _ = self.action_tx.send(Action::LoadVoters);
                 }
             }
@@ -356,18 +384,25 @@ impl App {
 
             // Balance
             Action::LoadBalance => {
+                self.balance_request_id = self.balance_request_id.wrapping_add(1);
                 self.balance_loading = LoadingState::Loading;
             }
-            Action::BalanceLoaded(result) => match result {
-                Ok(balance) => {
-                    self.balance = Some(balance);
-                    self.balance_loading = LoadingState::Loaded;
+            Action::BalanceLoaded(request_id, result) => {
+                // Ignore stale responses from old requests
+                if request_id != self.balance_request_id {
+                    return;
                 }
-                Err(e) => {
-                    self.balance = None;
-                    self.balance_loading = LoadingState::Error(e);
+                match result {
+                    Ok(balance) => {
+                        self.balance = Some(balance);
+                        self.balance_loading = LoadingState::Loaded;
+                    }
+                    Err(e) => {
+                        self.balance = None;
+                        self.balance_loading = LoadingState::Error(e);
+                    }
                 }
-            },
+            }
 
             // Config
             Action::UpdateChainUrl(url) => {
@@ -457,15 +492,23 @@ impl App {
             }
             Action::SelectAllVoters => {
                 // If all are selected, deselect all; otherwise select all
-                let all_selected = self.propose_form.available_voters.iter().all(|v| v.selected);
+                let all_selected = self
+                    .propose_form
+                    .available_voters
+                    .iter()
+                    .all(|v| v.selected);
                 for voter in &mut self.propose_form.available_voters {
                     voter.selected = !all_selected;
                 }
             }
+            Action::ToggleUseCommonSalt => {
+                self.propose_form.use_common_salt = !self.propose_form.use_common_salt;
+            }
             Action::NextProposeField => {
                 let num_voters = self.propose_form.available_voters.len();
                 self.propose_form.focused_field = match self.propose_form.focused_field {
-                    ProposeField::ContextName => {
+                    ProposeField::ContextName => ProposeField::UseCommonSalt,
+                    ProposeField::UseCommonSalt => {
                         if num_voters > 0 {
                             ProposeField::Voter(0)
                         } else {
@@ -486,13 +529,14 @@ impl App {
                 let num_voters = self.propose_form.available_voters.len();
                 self.propose_form.focused_field = match self.propose_form.focused_field {
                     ProposeField::ContextName => ProposeField::CreateButton,
-                    ProposeField::Voter(0) => ProposeField::ContextName,
+                    ProposeField::UseCommonSalt => ProposeField::ContextName,
+                    ProposeField::Voter(0) => ProposeField::UseCommonSalt,
                     ProposeField::Voter(i) => ProposeField::Voter(i - 1),
                     ProposeField::CreateButton => {
                         if num_voters > 0 {
                             ProposeField::Voter(num_voters - 1)
                         } else {
-                            ProposeField::ContextName
+                            ProposeField::UseCommonSalt
                         }
                     }
                 };
@@ -523,39 +567,53 @@ impl App {
                     _ => {}
                 }
             }
-            Action::InputBackspace => {
-                match self.screen {
-                    Screen::Config => {
-                        let field = self.config_form.focused_field;
-                        match field {
-                            0 => { self.config_form.chain_url.pop(); }
-                            1 => { self.config_form.mongodb_uri.pop(); }
-                            2 => { self.config_form.mongodb_db.pop(); }
-                            3 => { self.secret_uri.pop(); }
-                            _ => {}
+            Action::InputBackspace => match self.screen {
+                Screen::Config => {
+                    let field = self.config_form.focused_field;
+                    match field {
+                        0 => {
+                            self.config_form.chain_url.pop();
                         }
-                        if field == 0 || field == 3 {
-                            self.update_derived_address();
+                        1 => {
+                            self.config_form.mongodb_uri.pop();
                         }
+                        2 => {
+                            self.config_form.mongodb_db.pop();
+                        }
+                        3 => {
+                            self.secret_uri.pop();
+                        }
+                        _ => {}
                     }
-                    Screen::Propose => {
-                        if matches!(self.propose_form.focused_field, ProposeField::ContextName) {
-                            self.propose_form.context_name.pop();
-                        }
+                    if field == 0 || field == 3 {
+                        self.update_derived_address();
                     }
-                    _ => {}
                 }
-            }
+                Screen::Propose => {
+                    if matches!(self.propose_form.focused_field, ProposeField::ContextName) {
+                        self.propose_form.context_name.pop();
+                    }
+                }
+                _ => {}
+            },
             Action::InputDelete => {
                 // Same as backspace for now (could implement cursor position later)
                 match self.screen {
                     Screen::Config => {
                         let field = self.config_form.focused_field;
                         match field {
-                            0 => { self.config_form.chain_url.pop(); }
-                            1 => { self.config_form.mongodb_uri.pop(); }
-                            2 => { self.config_form.mongodb_db.pop(); }
-                            3 => { self.secret_uri.pop(); }
+                            0 => {
+                                self.config_form.chain_url.pop();
+                            }
+                            1 => {
+                                self.config_form.mongodb_uri.pop();
+                            }
+                            2 => {
+                                self.config_form.mongodb_db.pop();
+                            }
+                            3 => {
+                                self.secret_uri.pop();
+                            }
                             _ => {}
                         }
                         if field == 0 || field == 3 {
@@ -570,52 +628,48 @@ impl App {
                     _ => {}
                 }
             }
-            Action::InputClear => {
-                match self.screen {
-                    Screen::Config => {
-                        let field = self.config_form.focused_field;
-                        match field {
-                            0 => self.config_form.chain_url.clear(),
-                            1 => self.config_form.mongodb_uri.clear(),
-                            2 => self.config_form.mongodb_db.clear(),
-                            3 => self.secret_uri.clear(),
-                            _ => {}
-                        }
-                        if field == 0 || field == 3 {
-                            self.update_derived_address();
-                        }
+            Action::InputClear => match self.screen {
+                Screen::Config => {
+                    let field = self.config_form.focused_field;
+                    match field {
+                        0 => self.config_form.chain_url.clear(),
+                        1 => self.config_form.mongodb_uri.clear(),
+                        2 => self.config_form.mongodb_db.clear(),
+                        3 => self.secret_uri.clear(),
+                        _ => {}
                     }
-                    Screen::Propose => {
-                        if matches!(self.propose_form.focused_field, ProposeField::ContextName) {
-                            self.propose_form.context_name.clear();
-                        }
+                    if field == 0 || field == 3 {
+                        self.update_derived_address();
                     }
-                    _ => {}
                 }
-            }
-            Action::InputPaste(text) => {
-                match self.screen {
-                    Screen::Config => {
-                        let field = self.config_form.focused_field;
-                        match field {
-                            0 => self.config_form.chain_url.push_str(&text),
-                            1 => self.config_form.mongodb_uri.push_str(&text),
-                            2 => self.config_form.mongodb_db.push_str(&text),
-                            3 => self.secret_uri.push_str(&text),
-                            _ => {}
-                        }
-                        if field == 0 || field == 3 {
-                            self.update_derived_address();
-                        }
+                Screen::Propose => {
+                    if matches!(self.propose_form.focused_field, ProposeField::ContextName) {
+                        self.propose_form.context_name.clear();
                     }
-                    Screen::Propose => {
-                        if matches!(self.propose_form.focused_field, ProposeField::ContextName) {
-                            self.propose_form.context_name.push_str(&text);
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                _ => {}
+            },
+            Action::InputPaste(text) => match self.screen {
+                Screen::Config => {
+                    let field = self.config_form.focused_field;
+                    match field {
+                        0 => self.config_form.chain_url.push_str(&text),
+                        1 => self.config_form.mongodb_uri.push_str(&text),
+                        2 => self.config_form.mongodb_db.push_str(&text),
+                        3 => self.secret_uri.push_str(&text),
+                        _ => {}
+                    }
+                    if field == 0 || field == 3 {
+                        self.update_derived_address();
+                    }
+                }
+                Screen::Propose => {
+                    if matches!(self.propose_form.focused_field, ProposeField::ContextName) {
+                        self.propose_form.context_name.push_str(&text);
+                    }
+                }
+                _ => {}
+            },
 
             // Voting
             Action::StartVoting(ctx) => {
@@ -718,11 +772,7 @@ impl App {
     pub fn get_list_length(&self) -> usize {
         match self.screen {
             Screen::Home => 6, // Menu items (History, Voting, Propose, Config, Announce, Quit)
-            Screen::History => self
-                .history
-                .as_ref()
-                .map(|h| h.contexts.len())
-                .unwrap_or(0),
+            Screen::History => self.history.as_ref().map(|h| h.contexts.len()).unwrap_or(0),
             Screen::Voting => {
                 if self.selected_context.is_some() {
                     3 // Aye, Nay, Abstain
@@ -737,6 +787,7 @@ impl App {
     }
 
     /// Get list of contexts from history for display
+    #[allow(dead_code)]
     pub fn get_context_list(&self) -> Vec<&CorevoContext> {
         self.history
             .as_ref()
@@ -745,6 +796,7 @@ impl App {
     }
 
     /// Get selected voters for proposal
+    #[allow(dead_code)]
     pub fn get_selected_voters(&self) -> Vec<&AvailableVoter> {
         self.propose_form
             .available_voters
@@ -780,9 +832,9 @@ impl App {
 
                 // Include contexts where user still has action to take
                 match summary.votes.get(&hashable_account_id) {
-                    None => Some(ctx),                       // Need to commit
-                    Some(VoteStatus::Committed(_)) => Some(ctx), // Need to reveal
-                    Some(VoteStatus::Revealed(_)) => None,   // Already revealed - done
+                    None => Some(ctx),                                   // Need to commit
+                    Some(VoteStatus::Committed(_)) => Some(ctx),         // Need to reveal
+                    Some(VoteStatus::Revealed(_)) => None,               // Already revealed - done
                     Some(VoteStatus::RevealedWithoutCommitment) => None, // Invalid state
                 }
             })
@@ -800,6 +852,7 @@ impl App {
     }
 
     /// Get the context summary for the selected context
+    #[allow(dead_code)]
     pub fn get_selected_context_summary(&self) -> Option<&corevo_lib::ContextSummary> {
         let ctx = self.selected_context.as_ref()?;
         let history = self.history.as_ref()?;
@@ -815,6 +868,7 @@ impl App {
     }
 
     /// Get the current user's announced X25519 public key if available
+    #[allow(dead_code)]
     pub fn get_announced_pubkey(&self) -> Option<&corevo_lib::PublicKeyForEncryption> {
         let account_id = self.get_current_account_id()?;
         let history = self.history.as_ref()?;
@@ -830,7 +884,7 @@ impl App {
         }
 
         match &self.balance_loading {
-            LoadingState::Idle => None, // Not yet checked
+            LoadingState::Idle => None,    // Not yet checked
             LoadingState::Loading => None, // Still loading
             LoadingState::Loaded => {
                 // Account exists if balance > 0
@@ -854,12 +908,12 @@ impl App {
         let can_announce = can_use_chain && self.has_announced_pubkey() == Some(false);
 
         match index {
-            0 => false, // History - always enabled
+            0 => false,                                            // History - always enabled
             1 => !can_use_chain && self.derived_address.is_some(), // Vote
             2 => !can_use_chain && self.derived_address.is_some(), // Propose
-            3 => false, // Config - always enabled
-            4 => !can_announce, // Announce
-            5 => false, // Quit - always enabled
+            3 => false,                                            // Config - always enabled
+            4 => !can_announce,                                    // Announce
+            5 => false,                                            // Quit - always enabled
             _ => false,
         }
     }
@@ -890,8 +944,8 @@ impl App {
 
     /// Try to copy text using external clipboard tools (xclip, xsel, wl-copy)
     fn copy_to_clipboard_external(text: &str) -> Option<bool> {
-        use std::process::{Command, Stdio};
         use std::io::Write;
+        use std::process::{Command, Stdio};
 
         // Try wl-copy first (Wayland)
         if let Ok(mut child) = Command::new("wl-copy")
@@ -899,14 +953,12 @@ impl App {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
+            && let Some(mut stdin) = child.stdin.take()
+            && stdin.write_all(text.as_bytes()).is_ok()
         {
-            if let Some(mut stdin) = child.stdin.take() {
-                if stdin.write_all(text.as_bytes()).is_ok() {
-                    drop(stdin);
-                    if child.wait().map(|s| s.success()).unwrap_or(false) {
-                        return Some(true);
-                    }
-                }
+            drop(stdin);
+            if child.wait().map(|s| s.success()).unwrap_or(false) {
+                return Some(true);
             }
         }
 
@@ -917,14 +969,12 @@ impl App {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
+            && let Some(mut stdin) = child.stdin.take()
+            && stdin.write_all(text.as_bytes()).is_ok()
         {
-            if let Some(mut stdin) = child.stdin.take() {
-                if stdin.write_all(text.as_bytes()).is_ok() {
-                    drop(stdin);
-                    if child.wait().map(|s| s.success()).unwrap_or(false) {
-                        return Some(true);
-                    }
-                }
+            drop(stdin);
+            if child.wait().map(|s| s.success()).unwrap_or(false) {
+                return Some(true);
             }
         }
 
@@ -935,14 +985,12 @@ impl App {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
+            && let Some(mut stdin) = child.stdin.take()
+            && stdin.write_all(text.as_bytes()).is_ok()
         {
-            if let Some(mut stdin) = child.stdin.take() {
-                if stdin.write_all(text.as_bytes()).is_ok() {
-                    drop(stdin);
-                    if child.wait().map(|s| s.success()).unwrap_or(false) {
-                        return Some(true);
-                    }
-                }
+            drop(stdin);
+            if child.wait().map(|s| s.success()).unwrap_or(false) {
+                return Some(true);
             }
         }
 
@@ -962,15 +1010,15 @@ impl App {
                     std::thread::sleep(std::time::Duration::from_secs(30));
                 }
             });
-            return Some(true);
+            Some(true)
         }
 
         #[cfg(not(target_os = "linux"))]
         {
-            if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                if clipboard.set_text(text).is_ok() {
-                    return Some(true);
-                }
+            if let Ok(mut clipboard) = arboard::Clipboard::new()
+                && clipboard.set_text(text).is_ok()
+            {
+                return Some(true);
             }
             None
         }

@@ -118,7 +118,11 @@ impl Display for CorevoMessage {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             CorevoMessage::AnnounceOwnPubKey(pubkey_bytes) => {
-                write!(f, "AnnounceOwnPubKey(x25519pub: {})", hex_encode(pubkey_bytes))
+                write!(
+                    f,
+                    "AnnounceOwnPubKey(x25519pub: {})",
+                    hex_encode(pubkey_bytes)
+                )
             }
             CorevoMessage::InviteVoter(account, common_salt_encrypted) => {
                 write!(
@@ -207,4 +211,286 @@ pub fn decode_hex<T: AsRef<[u8]>>(message: T) -> Result<Vec<u8>, hex::FromHexErr
         _ => message,
     };
     hex::decode(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codec::{Decode, Encode};
+
+    #[test]
+    fn test_prefixed_remark_encode_decode_roundtrip() {
+        let context = CorevoContext::String("test-context".to_string());
+        let pubkey: PublicKeyForEncryption = [42u8; 32];
+        let msg = CorevoMessage::AnnounceOwnPubKey(pubkey);
+        let remark_v1 = CorevoRemarkV1 {
+            context: context.clone(),
+            msg: msg.clone(),
+        };
+        let original = PrefixedCorevoRemark(CorevoRemark::V1(remark_v1));
+
+        let encoded = original.encode();
+        let decoded = PrefixedCorevoRemark::decode(&mut encoded.as_slice()).unwrap();
+
+        assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn test_prefixed_remark_has_correct_prefix() {
+        let remark = PrefixedCorevoRemark(CorevoRemark::V1(CorevoRemarkV1 {
+            context: CorevoContext::String("x".to_string()),
+            msg: CorevoMessage::RevealOneTimeSalt([0u8; 32]),
+        }));
+        let encoded = remark.encode();
+        assert_eq!(&encoded[..3], &COREVO_REMARK_PREFIX);
+    }
+
+    #[test]
+    fn test_decode_fails_with_wrong_prefix() {
+        let mut bad_data = vec![0xde, 0xad, 0xbe]; // wrong prefix
+        bad_data.extend_from_slice(&[0u8; 50]); // some payload
+        let result = PrefixedCorevoRemark::decode(&mut bad_data.as_slice());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_commitment_deterministic() {
+        let vote_and_salt = CorevoVoteAndSalt {
+            vote: CorevoVote::Aye,
+            onetime_salt: [1u8; 32],
+        };
+        let common_salt: Salt = [2u8; 32];
+
+        let commitment1 = vote_and_salt.commit(Some(common_salt));
+        let commitment2 = vote_and_salt.commit(Some(common_salt));
+
+        assert_eq!(commitment1, commitment2);
+    }
+
+    #[test]
+    fn test_commitment_with_and_without_common_salt() {
+        let vote_and_salt = CorevoVoteAndSalt {
+            vote: CorevoVote::Aye,
+            onetime_salt: [1u8; 32],
+        };
+        let common_salt: Salt = [2u8; 32];
+
+        let with_salt = vote_and_salt.commit(Some(common_salt));
+        let without_salt = vote_and_salt.commit(None);
+
+        assert_ne!(with_salt, without_salt);
+    }
+
+    #[test]
+    fn test_commitment_differs_by_vote() {
+        let common_salt: Salt = [2u8; 32];
+        let onetime_salt: Salt = [1u8; 32];
+
+        let aye = CorevoVoteAndSalt {
+            vote: CorevoVote::Aye,
+            onetime_salt,
+        }
+        .commit(Some(common_salt));
+
+        let nay = CorevoVoteAndSalt {
+            vote: CorevoVote::Nay,
+            onetime_salt,
+        }
+        .commit(Some(common_salt));
+
+        let abstain = CorevoVoteAndSalt {
+            vote: CorevoVote::Abstain,
+            onetime_salt,
+        }
+        .commit(Some(common_salt));
+
+        assert_ne!(aye, nay);
+        assert_ne!(nay, abstain);
+        assert_ne!(aye, abstain);
+    }
+
+    #[test]
+    fn test_reveal_vote_by_bruteforce_aye() {
+        let onetime_salt: Salt = [1u8; 32];
+        let common_salt: Salt = [2u8; 32];
+        let vote_and_salt = CorevoVoteAndSalt {
+            vote: CorevoVote::Aye,
+            onetime_salt,
+        };
+        let commitment = vote_and_salt.commit(Some(common_salt));
+
+        let revealed =
+            CorevoVoteAndSalt::reveal_vote_by_bruteforce(onetime_salt, common_salt, commitment);
+        assert_eq!(revealed, Some(CorevoVote::Aye));
+    }
+
+    #[test]
+    fn test_reveal_vote_by_bruteforce_nay() {
+        let onetime_salt: Salt = [3u8; 32];
+        let common_salt: Salt = [4u8; 32];
+        let vote_and_salt = CorevoVoteAndSalt {
+            vote: CorevoVote::Nay,
+            onetime_salt,
+        };
+        let commitment = vote_and_salt.commit(Some(common_salt));
+
+        let revealed =
+            CorevoVoteAndSalt::reveal_vote_by_bruteforce(onetime_salt, common_salt, commitment);
+        assert_eq!(revealed, Some(CorevoVote::Nay));
+    }
+
+    #[test]
+    fn test_reveal_vote_by_bruteforce_abstain() {
+        let onetime_salt: Salt = [5u8; 32];
+        let common_salt: Salt = [6u8; 32];
+        let vote_and_salt = CorevoVoteAndSalt {
+            vote: CorevoVote::Abstain,
+            onetime_salt,
+        };
+        let commitment = vote_and_salt.commit(Some(common_salt));
+
+        let revealed =
+            CorevoVoteAndSalt::reveal_vote_by_bruteforce(onetime_salt, common_salt, commitment);
+        assert_eq!(revealed, Some(CorevoVote::Abstain));
+    }
+
+    #[test]
+    fn test_reveal_vote_wrong_salt_fails() {
+        let onetime_salt: Salt = [1u8; 32];
+        let common_salt: Salt = [2u8; 32];
+        let wrong_salt: Salt = [99u8; 32];
+        let vote_and_salt = CorevoVoteAndSalt {
+            vote: CorevoVote::Aye,
+            onetime_salt,
+        };
+        let commitment = vote_and_salt.commit(Some(common_salt));
+
+        // Wrong common salt
+        let revealed =
+            CorevoVoteAndSalt::reveal_vote_by_bruteforce(onetime_salt, wrong_salt, commitment);
+        assert_eq!(revealed, None);
+
+        // Wrong onetime salt
+        let revealed =
+            CorevoVoteAndSalt::reveal_vote_by_bruteforce(wrong_salt, common_salt, commitment);
+        assert_eq!(revealed, None);
+    }
+
+    #[test]
+    fn test_hex_encode() {
+        assert_eq!(hex_encode(&[0xde, 0xad, 0xbe, 0xef]), "0xdeadbeef");
+        assert_eq!(hex_encode(&[]), "0x");
+        assert_eq!(hex_encode(&[0x00, 0xff]), "0x00ff");
+    }
+
+    #[test]
+    fn test_decode_hex_with_prefix() {
+        assert_eq!(
+            decode_hex("0xdeadbeef").unwrap(),
+            vec![0xde, 0xad, 0xbe, 0xef]
+        );
+        let empty: Vec<u8> = vec![];
+        assert_eq!(decode_hex("0x").unwrap(), empty);
+    }
+
+    #[test]
+    fn test_decode_hex_without_prefix() {
+        assert_eq!(
+            decode_hex("deadbeef").unwrap(),
+            vec![0xde, 0xad, 0xbe, 0xef]
+        );
+        let empty: Vec<u8> = vec![];
+        assert_eq!(decode_hex("").unwrap(), empty);
+    }
+
+    #[test]
+    fn test_hex_encode_decode_roundtrip() {
+        let data = vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
+        let encoded = hex_encode(&data);
+        let decoded = decode_hex(&encoded).unwrap();
+        assert_eq!(data, decoded);
+    }
+
+    #[test]
+    fn test_corevo_context_string_encode_decode() {
+        let ctx = CorevoContext::String("my voting context".to_string());
+        let encoded = ctx.encode();
+        let decoded = CorevoContext::decode(&mut encoded.as_slice()).unwrap();
+        assert_eq!(ctx, decoded);
+    }
+
+    #[test]
+    fn test_corevo_context_bytes_encode_decode() {
+        let ctx = CorevoContext::Bytes(vec![0xca, 0xfe, 0xba, 0xbe]);
+        let encoded = ctx.encode();
+        let decoded = CorevoContext::decode(&mut encoded.as_slice()).unwrap();
+        assert_eq!(ctx, decoded);
+    }
+
+    #[test]
+    fn test_corevo_context_display_string() {
+        let ctx = CorevoContext::String("hello".to_string());
+        assert_eq!(format!("{}", ctx), "hello");
+    }
+
+    #[test]
+    fn test_corevo_context_display_bytes() {
+        let ctx = CorevoContext::Bytes(vec![0xca, 0xfe]);
+        assert_eq!(format!("{}", ctx), "0xcafe");
+    }
+
+    #[test]
+    fn test_corevo_vote_encode_decode() {
+        for vote in [CorevoVote::Aye, CorevoVote::Nay, CorevoVote::Abstain] {
+            let encoded = vote.encode();
+            let decoded = CorevoVote::decode(&mut encoded.as_slice()).unwrap();
+            assert_eq!(vote, decoded);
+        }
+    }
+
+    #[test]
+    fn test_corevo_vote_display() {
+        assert_eq!(format!("{}", CorevoVote::Aye), "Aye");
+        assert_eq!(format!("{}", CorevoVote::Nay), "Nay");
+        assert_eq!(format!("{}", CorevoVote::Abstain), "Abstain");
+    }
+
+    #[test]
+    fn test_corevo_message_variants_encode_decode() {
+        use subxt::utils::AccountId32;
+
+        let messages = vec![
+            CorevoMessage::AnnounceOwnPubKey([42u8; 32]),
+            CorevoMessage::InviteVoter(AccountId32([1u8; 32]), vec![0xde, 0xad]),
+            CorevoMessage::Commit([3u8; 32], vec![0xbe, 0xef]),
+            CorevoMessage::RevealOneTimeSalt([4u8; 32]),
+        ];
+
+        for msg in messages {
+            let encoded = msg.encode();
+            let decoded = CorevoMessage::decode(&mut encoded.as_slice()).unwrap();
+            assert_eq!(msg, decoded);
+        }
+    }
+
+    #[test]
+    fn test_corevo_vote_and_salt_encode_decode() {
+        let vote_and_salt = CorevoVoteAndSalt {
+            vote: CorevoVote::Nay,
+            onetime_salt: [7u8; 32],
+        };
+        let encoded = vote_and_salt.encode();
+        let decoded = CorevoVoteAndSalt::decode(&mut encoded.as_slice()).unwrap();
+        assert_eq!(vote_and_salt, decoded);
+    }
+
+    #[test]
+    fn test_prefixed_remark_from_corevo_remark() {
+        let remark = CorevoRemark::V1(CorevoRemarkV1 {
+            context: CorevoContext::String("ctx".to_string()),
+            msg: CorevoMessage::RevealOneTimeSalt([0u8; 32]),
+        });
+        let prefixed: PrefixedCorevoRemark = remark.clone().into();
+        assert_eq!(prefixed.0, remark);
+    }
 }

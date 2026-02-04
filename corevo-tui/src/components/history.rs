@@ -1,10 +1,10 @@
 use corevo_lib::{VoteStatus, format_account_ss58, ss58_prefix_for_chain};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 
 use crate::app::{App, LoadingState};
@@ -17,16 +17,20 @@ impl HistoryComponent {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Length(6),  // My Account pane
-                Constraint::Min(10),    // Content
-                Constraint::Length(3),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Length(6), // My Account pane
+                Constraint::Min(10),   // Content
+                Constraint::Length(3), // Help
             ])
             .split(frame.area());
 
         // Title
         let title = Paragraph::new("Voting History")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::BOTTOM));
         frame.render_widget(title, chunks[0]);
 
@@ -66,17 +70,19 @@ impl HistoryComponent {
                         history.contexts.keys().collect();
                     let items: Vec<ListItem> = contexts
                         .iter()
-                        .map(|ctx| {
-                            ListItem::new(format!("{}", ctx))
-                        })
+                        .map(|ctx| ListItem::new(format!("{}", ctx)))
                         .collect();
 
                     let list = List::new(items)
-                        .block(Block::default().title(format!("Contexts ({})", contexts.len())).borders(Borders::ALL))
+                        .block(
+                            Block::default()
+                                .title(format!("Contexts ({})", contexts.len()))
+                                .borders(Borders::ALL),
+                        )
                         .highlight_style(
                             Style::default()
                                 .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
                         )
                         .highlight_symbol("> ");
 
@@ -111,7 +117,9 @@ impl HistoryComponent {
                                         corevo_lib::CorevoVote::Abstain => abstain_count += 1,
                                     },
                                     Some(VoteStatus::Revealed(Err(_))) => unknown_count += 1,
-                                    Some(VoteStatus::RevealedWithoutCommitment) => unknown_count += 1,
+                                    Some(VoteStatus::RevealedWithoutCommitment) => {
+                                        unknown_count += 1
+                                    }
                                 }
                             }
 
@@ -133,12 +141,21 @@ impl HistoryComponent {
                                     Span::raw(format!("{}", abstain_count)),
                                 ]),
                                 Line::from(vec![
-                                    Span::styled("  Unrevealed: ", Style::default().fg(Color::Yellow)),
+                                    Span::styled(
+                                        "  Unrevealed: ",
+                                        Style::default().fg(Color::Yellow),
+                                    ),
                                     Span::raw(format!("{}", committed_count)),
-                                    Span::styled("  Uncast: ", Style::default().fg(Color::DarkGray)),
+                                    Span::styled(
+                                        "  Uncast: ",
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
                                     Span::raw(format!("{}", uncast_count)),
                                     if unknown_count > 0 {
-                                        Span::styled(format!("  Unknown: {}", unknown_count), Style::default().fg(Color::DarkGray))
+                                        Span::styled(
+                                            format!("  Unknown: {}", unknown_count),
+                                            Style::default().fg(Color::DarkGray),
+                                        )
                                     } else {
                                         Span::raw("")
                                     },
@@ -153,21 +170,28 @@ impl HistoryComponent {
                             for voter in &summary.voters {
                                 let voter_ss58 = format_account_ss58(&voter.0, ss58_prefix);
                                 let vote_display = match summary.votes.get(voter) {
-                                    None => Span::styled("Uncast", Style::default().fg(Color::DarkGray)),
-                                    Some(VoteStatus::Committed(_)) => {
-                                        Span::styled("Committed", Style::default().fg(Color::Yellow))
+                                    None => {
+                                        Span::styled("Uncast", Style::default().fg(Color::DarkGray))
                                     }
+                                    Some(VoteStatus::Committed(_)) => Span::styled(
+                                        "Committed",
+                                        Style::default().fg(Color::Yellow),
+                                    ),
                                     Some(VoteStatus::Revealed(Ok(vote))) => {
                                         let color = match vote {
                                             corevo_lib::CorevoVote::Aye => Color::Green,
                                             corevo_lib::CorevoVote::Nay => Color::Red,
                                             corevo_lib::CorevoVote::Abstain => Color::Blue,
                                         };
-                                        Span::styled(format!("{:?}", vote), Style::default().fg(color))
+                                        Span::styled(
+                                            format!("{:?}", vote),
+                                            Style::default().fg(color),
+                                        )
                                     }
-                                    Some(VoteStatus::Revealed(Err(_))) => {
-                                        Span::styled("****** (unknown salt)", Style::default().fg(Color::DarkGray))
-                                    }
+                                    Some(VoteStatus::Revealed(Err(_))) => Span::styled(
+                                        "****** (unknown salt)",
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
                                     Some(VoteStatus::RevealedWithoutCommitment) => {
                                         Span::styled("Invalid", Style::default().fg(Color::Red))
                                     }
@@ -175,7 +199,11 @@ impl HistoryComponent {
 
                                 // Truncate address for display
                                 let voter_short = if voter_ss58.len() > 16 {
-                                    format!("{}..{}", &voter_ss58[..8], &voter_ss58[voter_ss58.len()-6..])
+                                    format!(
+                                        "{}..{}",
+                                        &voter_ss58[..8],
+                                        &voter_ss58[voter_ss58.len() - 6..]
+                                    )
                                 } else {
                                     voter_ss58
                                 };
@@ -212,9 +240,10 @@ impl HistoryComponent {
         }
 
         // Help
-        let help = Paragraph::new("Up/Down: Navigate | r: Refresh | Click address to copy | Esc: Back")
-            .style(Style::default().fg(Color::DarkGray))
-            .block(Block::default().borders(Borders::TOP));
+        let help =
+            Paragraph::new("Up/Down: Navigate | r: Refresh | Click address to copy | Esc: Back")
+                .style(Style::default().fg(Color::DarkGray))
+                .block(Block::default().borders(Borders::TOP));
         frame.render_widget(help, chunks[3]);
     }
 
@@ -239,15 +268,13 @@ impl HistoryComponent {
         }
 
         let lines = if app.secret_uri.is_empty() {
-            vec![
-                Line::from(Span::styled(
-                    "No account configured. Go to Config to set up.",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ]
+            vec![Line::from(Span::styled(
+                "No account configured. Go to Config to set up.",
+                Style::default().fg(Color::DarkGray),
+            ))]
         } else if let Some(addr) = &app.derived_address {
             let addr_short = if addr.len() > 24 {
-                format!("{}...{}", &addr[..12], &addr[addr.len()-10..])
+                format!("{}...{}", &addr[..12], &addr[addr.len() - 10..])
             } else {
                 addr.clone()
             };
@@ -263,12 +290,18 @@ impl HistoryComponent {
                 Some(true) => Line::from(vec![
                     Span::styled("X25519 Pubkey: ", Style::default().fg(Color::Yellow)),
                     Span::styled("Announced ", Style::default().fg(Color::Green)),
-                    Span::styled("(others can invite you to vote)", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        "(others can invite you to vote)",
+                        Style::default().fg(Color::DarkGray),
+                    ),
                 ]),
                 Some(false) => Line::from(vec![
                     Span::styled("X25519 Pubkey: ", Style::default().fg(Color::Yellow)),
                     Span::styled("Not announced ", Style::default().fg(Color::Red)),
-                    Span::styled("(go to Home to announce)", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        "(go to Home to announce)",
+                        Style::default().fg(Color::DarkGray),
+                    ),
                 ]),
                 None => Line::from(vec![
                     Span::styled("X25519 Pubkey: ", Style::default().fg(Color::Yellow)),
@@ -279,22 +312,25 @@ impl HistoryComponent {
             vec![
                 Line::from(vec![
                     Span::styled("Address: ", Style::default().fg(Color::Yellow)),
-                    Span::styled(addr_short, Style::default().fg(Color::Green).add_modifier(Modifier::UNDERLINED)),
+                    Span::styled(
+                        addr_short,
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::UNDERLINED),
+                    ),
                     copy_hint,
                 ]),
                 pubkey_status,
             ]
         } else {
-            vec![
-                Line::from(Span::styled(
-                    "Invalid account configuration",
-                    Style::default().fg(Color::Red),
-                )),
-            ]
+            vec![Line::from(Span::styled(
+                "Invalid account configuration",
+                Style::default().fg(Color::Red),
+            ))]
         };
 
-        let content = Paragraph::new(lines)
-            .block(Block::default().title("My Account").borders(Borders::ALL));
+        let content =
+            Paragraph::new(lines).block(Block::default().title("My Account").borders(Borders::ALL));
         frame.render_widget(content, area);
     }
 }

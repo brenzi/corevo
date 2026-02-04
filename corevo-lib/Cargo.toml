@@ -11,6 +11,7 @@ subxt-signer.workspace = true
 # Async runtime
 tokio.workspace = true
 futures.workspace = true
+async-trait.workspace = true
 
 # Crypto
 crypto_box.workspace = true
@@ -34,3 +35,6 @@ log.workspace = true
 
 # Error handling
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

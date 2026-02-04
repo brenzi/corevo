@@ -1,11 +1,14 @@
 use std::str::FromStr;
 
-use blake2::{Blake2b512, Blake2b, digest::{consts::U64, Digest}};
-use crypto_box::{
-    aead::{Aead, AeadCore, OsRng},
-    ChaChaBox, PublicKey as BoxPublicKey, SecretKey as BoxSecretKey,
+use blake2::{
+    Blake2b, Blake2b512,
+    digest::{Digest, consts::U64},
 };
-use subxt_signer::{sr25519::Keypair, ExposeSecret, SecretUri};
+use crypto_box::{
+    ChaChaBox, PublicKey as BoxPublicKey, SecretKey as BoxSecretKey,
+    aead::{Aead, AeadCore, OsRng},
+};
+use subxt_signer::{ExposeSecret, SecretUri, sr25519::Keypair};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::error::{CorevoError, Result};
@@ -165,15 +168,30 @@ pub struct ChainTokenInfo {
 pub fn token_info_for_chain(chain_url: &str) -> ChainTokenInfo {
     let url_lower = chain_url.to_lowercase();
     if url_lower.contains("kusama") || url_lower.contains("ksm") {
-        ChainTokenInfo { symbol: "KSM", decimals: 12 }
+        ChainTokenInfo {
+            symbol: "KSM",
+            decimals: 12,
+        }
     } else if url_lower.contains("polkadot") || url_lower.contains("dot") {
-        ChainTokenInfo { symbol: "DOT", decimals: 10 }
+        ChainTokenInfo {
+            symbol: "DOT",
+            decimals: 10,
+        }
     } else if url_lower.contains("westend") || url_lower.contains("wnd") {
-        ChainTokenInfo { symbol: "WND", decimals: 12 }
+        ChainTokenInfo {
+            symbol: "WND",
+            decimals: 12,
+        }
     } else if url_lower.contains("paseo") || url_lower.contains("pas") {
-        ChainTokenInfo { symbol: "PAS", decimals: 10 }
+        ChainTokenInfo {
+            symbol: "PAS",
+            decimals: 10,
+        }
     } else {
-        ChainTokenInfo { symbol: "UNIT", decimals: 12 }
+        ChainTokenInfo {
+            symbol: "UNIT",
+            decimals: 12,
+        }
     }
 }
 
@@ -195,5 +213,270 @@ pub fn format_balance(balance: u128, decimals: u8) -> String {
             trimmed
         };
         format!("{}.{}", whole, display_frac)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Known test vector: //Alice on Substrate
+    // SR25519 pubkey: 0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d
+    const ALICE_PUBKEY: [u8; 32] = [
+        0xd4, 0x35, 0x93, 0xc7, 0x15, 0xfd, 0xd3, 0x1c, 0x61, 0x14, 0x1a, 0xbd, 0x04, 0xa9, 0x9f,
+        0xd6, 0x82, 0x2c, 0x85, 0x58, 0x85, 0x4c, 0xcd, 0xe3, 0x9a, 0x56, 0x84, 0xe7, 0xa5, 0x6d,
+        0xa2, 0x7d,
+    ];
+
+    #[test]
+    fn test_derive_account_from_uri_alice() {
+        let account = derive_account_from_uri("//Alice").unwrap();
+        let pubkey: [u8; 32] = account.sr25519_keypair.public_key().0;
+        assert_eq!(pubkey, ALICE_PUBKEY);
+    }
+
+    #[test]
+    fn test_derive_account_from_uri_bob() {
+        // Ensure different dev accounts produce different keys
+        let alice = derive_account_from_uri("//Alice").unwrap();
+        let bob = derive_account_from_uri("//Bob").unwrap();
+
+        let alice_pubkey: [u8; 32] = alice.sr25519_keypair.public_key().0;
+        let bob_pubkey: [u8; 32] = bob.sr25519_keypair.public_key().0;
+
+        assert_ne!(alice_pubkey, bob_pubkey);
+    }
+
+    #[test]
+    fn test_derive_account_x25519_keys_generated() {
+        let account = derive_account_from_uri("//Alice").unwrap();
+
+        // X25519 public key should be derivable from secret
+        let derived_public = X25519PublicKey::from(&account.x25519_secret);
+        assert_eq!(account.x25519_public, derived_public);
+    }
+
+    #[test]
+    fn test_derive_account_invalid_uri() {
+        // Completely invalid URI
+        let result = derive_account_from_uri("not a valid uri !@#$%");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_encode_ss58_substrate_prefix() {
+        // //Alice with Substrate prefix (42)
+        let address = encode_ss58(&ALICE_PUBKEY, SS58_PREFIX_SUBSTRATE);
+        assert_eq!(address, "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY");
+    }
+
+    #[test]
+    fn test_encode_ss58_kusama_prefix() {
+        // //Alice with Kusama prefix (2)
+        let address = encode_ss58(&ALICE_PUBKEY, SS58_PREFIX_KUSAMA);
+        assert_eq!(address, "HNZata7iMYWmk5RvZRTiAsSDhV8366zq2YGb3tLH5Upf74F");
+    }
+
+    #[test]
+    fn test_encode_ss58_polkadot_prefix() {
+        // //Alice with Polkadot prefix (0)
+        let address = encode_ss58(&ALICE_PUBKEY, SS58_PREFIX_POLKADOT);
+        assert_eq!(address, "15oF4uVJwmo4TdGW7VfQxNLavjCXviqxT9S1MgbjMNHr6Sp5");
+    }
+
+    #[test]
+    fn test_derive_address_from_uri_roundtrip() {
+        let address = derive_address_from_uri("//Alice", SS58_PREFIX_SUBSTRATE).unwrap();
+        assert_eq!(address, "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY");
+    }
+
+    #[test]
+    fn test_ss58_prefix_for_chain_kusama() {
+        assert_eq!(
+            ss58_prefix_for_chain("wss://kusama-rpc.polkadot.io"),
+            SS58_PREFIX_KUSAMA
+        );
+        assert_eq!(
+            ss58_prefix_for_chain("wss://asset-hub-kusama.api.onfinality.io"),
+            SS58_PREFIX_KUSAMA
+        );
+        assert_eq!(
+            ss58_prefix_for_chain("wss://ksm.api.example.com"),
+            SS58_PREFIX_KUSAMA
+        );
+    }
+
+    #[test]
+    fn test_ss58_prefix_for_chain_polkadot() {
+        assert_eq!(
+            ss58_prefix_for_chain("wss://rpc.polkadot.io"),
+            SS58_PREFIX_POLKADOT
+        );
+        assert_eq!(
+            ss58_prefix_for_chain("wss://dot.api.example.com"),
+            SS58_PREFIX_POLKADOT
+        );
+    }
+
+    #[test]
+    fn test_ss58_prefix_for_chain_default() {
+        assert_eq!(
+            ss58_prefix_for_chain("wss://some-unknown-chain.io"),
+            SS58_PREFIX_SUBSTRATE
+        );
+        assert_eq!(
+            ss58_prefix_for_chain("wss://localhost:9944"),
+            SS58_PREFIX_SUBSTRATE
+        );
+    }
+
+    #[test]
+    fn test_token_info_for_chain_kusama() {
+        let info = token_info_for_chain("wss://kusama-rpc.polkadot.io");
+        assert_eq!(info.symbol, "KSM");
+        assert_eq!(info.decimals, 12);
+    }
+
+    #[test]
+    fn test_token_info_for_chain_polkadot() {
+        let info = token_info_for_chain("wss://rpc.polkadot.io");
+        assert_eq!(info.symbol, "DOT");
+        assert_eq!(info.decimals, 10);
+    }
+
+    #[test]
+    fn test_token_info_for_chain_westend() {
+        // The URL must contain "westend" or "wnd" to match
+        let info = token_info_for_chain("wss://wnd-rpc.example.com");
+        assert_eq!(info.symbol, "WND");
+        assert_eq!(info.decimals, 12);
+    }
+
+    #[test]
+    fn test_token_info_for_chain_paseo() {
+        let info = token_info_for_chain("wss://paseo.api.example.com");
+        assert_eq!(info.symbol, "PAS");
+        assert_eq!(info.decimals, 10);
+    }
+
+    #[test]
+    fn test_token_info_for_chain_default() {
+        let info = token_info_for_chain("wss://unknown-chain.io");
+        assert_eq!(info.symbol, "UNIT");
+        assert_eq!(info.decimals, 12);
+    }
+
+    #[test]
+    fn test_format_balance_whole_number() {
+        assert_eq!(format_balance(1_000_000_000_000, 12), "1");
+        assert_eq!(format_balance(5_000_000_000_000, 12), "5");
+        assert_eq!(format_balance(0, 12), "0");
+    }
+
+    #[test]
+    fn test_format_balance_with_decimals() {
+        // 1.5 KSM
+        assert_eq!(format_balance(1_500_000_000_000, 12), "1.5");
+        // 1.25 KSM
+        assert_eq!(format_balance(1_250_000_000_000, 12), "1.25");
+        // 1.125 KSM
+        assert_eq!(format_balance(1_125_000_000_000, 12), "1.125");
+    }
+
+    #[test]
+    fn test_format_balance_truncates_to_4_decimals() {
+        // 1.123456789... should show as 1.1234
+        assert_eq!(format_balance(1_123_456_789_000, 12), "1.1234");
+    }
+
+    #[test]
+    fn test_format_balance_trims_trailing_zeros() {
+        // 1.1000 should be 1.1
+        assert_eq!(format_balance(1_100_000_000_000, 12), "1.1");
+        // 1.1200 should be 1.12
+        assert_eq!(format_balance(1_120_000_000_000, 12), "1.12");
+    }
+
+    #[test]
+    fn test_format_balance_different_decimals() {
+        // DOT has 10 decimals
+        assert_eq!(format_balance(10_000_000_000, 10), "1");
+        assert_eq!(format_balance(15_000_000_000, 10), "1.5");
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let alice = derive_account_from_uri("//Alice").unwrap();
+        let bob = derive_account_from_uri("//Bob").unwrap();
+
+        let plaintext = b"secret message for bob";
+
+        // Alice encrypts for Bob
+        let ciphertext =
+            encrypt_for_recipient(&alice.x25519_secret, &bob.x25519_public, plaintext).unwrap();
+
+        // Bob decrypts from Alice
+        let decrypted =
+            decrypt_from_sender(&bob.x25519_secret, &alice.x25519_public, &ciphertext).unwrap();
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_self() {
+        let alice = derive_account_from_uri("//Alice").unwrap();
+        let plaintext = b"note to self";
+
+        // Alice encrypts for herself
+        let ciphertext =
+            encrypt_for_recipient(&alice.x25519_secret, &alice.x25519_public, plaintext).unwrap();
+
+        // Alice decrypts
+        let decrypted =
+            decrypt_from_sender(&alice.x25519_secret, &alice.x25519_public, &ciphertext).unwrap();
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_decrypt_ciphertext_too_short() {
+        let alice = derive_account_from_uri("//Alice").unwrap();
+
+        // Ciphertext must be at least 24 bytes (nonce size)
+        let short_ciphertext = vec![0u8; 10];
+        let result = decrypt_from_sender(
+            &alice.x25519_secret,
+            &alice.x25519_public,
+            &short_ciphertext,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decrypt_wrong_key_fails() {
+        let alice = derive_account_from_uri("//Alice").unwrap();
+        let bob = derive_account_from_uri("//Bob").unwrap();
+        let charlie = derive_account_from_uri("//Charlie").unwrap();
+
+        let plaintext = b"secret for bob";
+
+        // Alice encrypts for Bob
+        let ciphertext =
+            encrypt_for_recipient(&alice.x25519_secret, &bob.x25519_public, plaintext).unwrap();
+
+        // Charlie tries to decrypt (should fail)
+        let result = decrypt_from_sender(&charlie.x25519_secret, &alice.x25519_public, &ciphertext);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_format_account_ss58() {
+        use subxt::utils::AccountId32;
+
+        let account_id = AccountId32(ALICE_PUBKEY);
+        let address = format_account_ss58(&account_id, SS58_PREFIX_SUBSTRATE);
+        assert_eq!(address, "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY");
     }
 }

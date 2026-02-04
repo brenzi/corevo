@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use codec::Encode;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;
@@ -5,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::config::Config;
 use crate::error::{CorevoError, Result};
-use crate::primitives::PrefixedCorevoRemark;
+use crate::primitives::{CorevoRemarkV1, PrefixedCorevoRemark};
 
 // Generate the runtime API from metadata
 #[subxt::subxt(runtime_metadata_path = "../kusama_asset_hub_metadata.scale")]
@@ -13,6 +14,23 @@ pub mod assethub {}
 
 /// Type alias for the chain configuration
 pub type AssetHubConfig = PolkadotConfig;
+
+/// Trait for chain interactions - enables mocking in tests
+#[async_trait]
+pub trait ChainApi: Send + Sync {
+    /// Check account balance on chain
+    async fn get_account_balance(&self, account_id: &subxt::utils::AccountId32) -> Result<u128>;
+
+    /// Send a CoReVo remark transaction
+    async fn send_remark(&self, signer: &Keypair, remark: PrefixedCorevoRemark) -> Result<()>;
+
+    /// Subscribe to finalized blocks and receive CoReVo remarks
+    ///
+    /// Returns a receiver channel that yields (sender, remark) tuples
+    fn subscribe_remarks(
+        &self,
+    ) -> Result<mpsc::Receiver<(subxt::utils::AccountId32, CorevoRemarkV1)>>;
+}
 
 /// Client for interacting with the Substrate chain
 pub struct ChainClient {
@@ -52,11 +70,7 @@ impl ChainClient {
     }
 
     /// Send a CoReVo remark transaction
-    pub async fn send_remark(
-        &self,
-        signer: &Keypair,
-        remark: PrefixedCorevoRemark,
-    ) -> Result<()> {
+    pub async fn send_remark(&self, signer: &Keypair, remark: PrefixedCorevoRemark) -> Result<()> {
         let remark_bytes = remark.encode();
 
         let remark_tx = assethub::tx().system().remark(remark_bytes);
@@ -75,12 +89,10 @@ impl ChainClient {
         Ok(())
     }
 
-    /// Subscribe to finalized blocks and receive CoReVo remarks
-    ///
-    /// Returns a receiver channel that yields (sender, remark) tuples
-    pub fn subscribe_remarks(
+    /// Subscribe to finalized blocks and receive CoReVo remarks (internal implementation)
+    fn subscribe_remarks_impl(
         &self,
-    ) -> Result<mpsc::Receiver<(subxt::utils::AccountId32, crate::primitives::CorevoRemarkV1)>> {
+    ) -> Result<mpsc::Receiver<(subxt::utils::AccountId32, CorevoRemarkV1)>> {
         use codec::Decode;
         use subxt::utils::{AccountId32, MultiAddress};
 
@@ -132,13 +144,12 @@ impl ChainClient {
                             &mut remark.remark.as_slice(),
                         ) {
                             #[allow(irrefutable_let_patterns)]
-                            if let crate::primitives::CorevoRemark::V1(remark_v1) = prefixed.0 {
-                                if let Some(sender_id) = sender {
-                                    if tx.send((sender_id, remark_v1)).await.is_err() {
-                                        // Receiver dropped, stop subscription
-                                        return;
-                                    }
-                                }
+                            if let (crate::primitives::CorevoRemark::V1(remark_v1), Some(sender_id)) =
+                                (prefixed.0, sender)
+                                && tx.send((sender_id, remark_v1)).await.is_err()
+                            {
+                                // Receiver dropped, stop subscription
+                                return;
                             }
                         }
                     }
@@ -147,5 +158,22 @@ impl ChainClient {
         });
 
         Ok(rx)
+    }
+}
+
+#[async_trait]
+impl ChainApi for ChainClient {
+    async fn get_account_balance(&self, account_id: &subxt::utils::AccountId32) -> Result<u128> {
+        self.get_account_balance(account_id).await
+    }
+
+    async fn send_remark(&self, signer: &Keypair, remark: PrefixedCorevoRemark) -> Result<()> {
+        self.send_remark(signer, remark).await
+    }
+
+    fn subscribe_remarks(
+        &self,
+    ) -> Result<mpsc::Receiver<(subxt::utils::AccountId32, CorevoRemarkV1)>> {
+        self.subscribe_remarks_impl()
     }
 }

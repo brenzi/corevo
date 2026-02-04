@@ -53,3 +53,87 @@ impl Config {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+
+        // Verify defaults point to Kusama Asset Hub
+        assert!(config.chain_url.contains("kusama"));
+        assert!(!config.mongodb_uri.is_empty());
+        assert!(!config.mongodb_db.is_empty());
+    }
+
+    #[test]
+    fn test_config_new() {
+        let config = Config::new(
+            "wss://example.com".to_string(),
+            "mongodb://localhost:27017".to_string(),
+            "test_db".to_string(),
+        );
+
+        assert_eq!(config.chain_url, "wss://example.com");
+        assert_eq!(config.mongodb_uri, "mongodb://localhost:27017");
+        assert_eq!(config.mongodb_db, "test_db");
+    }
+
+    #[test]
+    fn test_config_save_load_roundtrip() {
+        let original = Config::new(
+            "wss://test-chain.io".to_string(),
+            "mongodb://user:pass@host:27017".to_string(),
+            "my_database".to_string(),
+        );
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        // Save
+        original.save_to_file(path).unwrap();
+
+        // Load
+        let loaded = Config::load_from_file(path).unwrap();
+
+        assert_eq!(original.chain_url, loaded.chain_url);
+        assert_eq!(original.mongodb_uri, loaded.mongodb_uri);
+        assert_eq!(original.mongodb_db, loaded.mongodb_db);
+    }
+
+    #[test]
+    fn test_config_load_invalid_json() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(b"not valid json").unwrap();
+
+        let result = Config::load_from_file(temp_file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_load_nonexistent_file() {
+        let result = Config::load_from_file(std::path::Path::new("/nonexistent/path/config.json"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_serialization_format() {
+        let config = Config::new(
+            "wss://chain.io".to_string(),
+            "mongodb://localhost".to_string(),
+            "db".to_string(),
+        );
+
+        let json = serde_json::to_string(&config).unwrap();
+
+        // Verify JSON contains expected fields
+        assert!(json.contains("chain_url"));
+        assert!(json.contains("mongodb_uri"));
+        assert!(json.contains("mongodb_db"));
+        assert!(json.contains("wss://chain.io"));
+    }
+}
