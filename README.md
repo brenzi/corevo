@@ -61,6 +61,45 @@ For each member's last submitted commitment, guess the vote by trying all possib
 A group can decide to reveal their votes to an auditor by sharing the *common salt* along with the *context* for all their ballots. 
 Knowing all account addresses of a group and the *common salt* for each proposal the auditor can reproduce everything from all onchain system.remarks.
 
+## Usage
+
+Build the project
+```
+cargo build --release
+```
+Run the cli tool (currently hardcoded to Kusama Asset Hub)
+```
+cargo run --release
+```
+
+### Prepare Account
+
+Except for *History*, all actions will require you to input your seed phrase in *Config*. 
+This secret is only kept in RAM, so you'll need to enter it at every start of the application. 
+We suggest using a fresh account phrase for corevo only. 
+Make sure the account exists on chain and has a balance to pay fees.
+On the home screen you can see your balance. 
+
+### Explore History
+
+Select *History* to see past votes on the chain. 
+Everybody can see who has voted and revealed - without learning the votes.
+If your account has the necessary permissions, you will see voting turnout and results.
+
+### Voters Announce Their Public Key
+
+Each voter account has to announce their X25519 public key once before they can vote.
+
+### Propose A Vote
+
+Select *Propose Vote* to start a new vote.
+You need to input a *context* (see above) and corevo will generate a new *common salt* for you.
+Select the group members by their account addresses in the list of all accounts who have announced their pubkeys.
+
+### Commit And Reveal A Vote
+
+Select *Vote* where you will be shown all proposals/contexts which are awaiting your actions, either to commit or reveal your vote.
+
 ## For Developers
 
 Add or update metadata for different chains
