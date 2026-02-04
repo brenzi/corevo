@@ -14,6 +14,7 @@ subxt-signer = { version = "0.44", features = ["subxt"] }
 # Async runtime
 tokio = { version = "1.44.2", features = ["macros", "time", "rt-multi-thread", "sync"] }
 futures = "0.3"
+async-trait = "0.1"
 
 # Crypto
 crypto_box = { version = "0.9", features = ["chacha20"] }

@@ -71,3 +71,96 @@ impl From<codec::Error> for CorevoError {
 }
 
 pub type Result<T> = std::result::Result<T, CorevoError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display_chain_connection() {
+        let err = CorevoError::ChainConnection("connection refused".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Chain connection failed"));
+        assert!(display.contains("connection refused"));
+    }
+
+    #[test]
+    fn test_error_display_transaction() {
+        let err = CorevoError::Transaction("nonce too low".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Transaction failed"));
+        assert!(display.contains("nonce too low"));
+    }
+
+    #[test]
+    fn test_error_display_invalid_secret_uri() {
+        let err = CorevoError::InvalidSecretUri("bad phrase".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Invalid secret URI"));
+    }
+
+    #[test]
+    fn test_error_display_account_not_found() {
+        let err = CorevoError::AccountNotFound("5GrwvaEF...".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Account not found"));
+    }
+
+    #[test]
+    fn test_error_display_encryption() {
+        let err = CorevoError::Encryption("key mismatch".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Encryption failed"));
+    }
+
+    #[test]
+    fn test_error_display_decryption() {
+        let err = CorevoError::Decryption("invalid ciphertext".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Decryption failed"));
+    }
+
+    #[test]
+    fn test_error_display_decode() {
+        let err = CorevoError::Decode("unexpected byte".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Codec decode error"));
+    }
+
+    #[test]
+    fn test_error_display_config() {
+        let err = CorevoError::Config("missing field".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Invalid configuration"));
+    }
+
+    #[test]
+    fn test_error_display_subxt() {
+        let err = CorevoError::Subxt("RPC error".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Subxt error"));
+    }
+
+    #[test]
+    fn test_error_from_hex_decode() {
+        let hex_err = hex::decode("not hex").unwrap_err();
+        let err: CorevoError = hex_err.into();
+        let display = format!("{}", err);
+        assert!(display.contains("Hex decode error"));
+    }
+
+    #[test]
+    fn test_error_from_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: CorevoError = io_err.into();
+        let display = format!("{}", err);
+        assert!(display.contains("IO error"));
+    }
+
+    #[test]
+    fn test_error_debug_impl() {
+        let err = CorevoError::ChainConnection("test".to_string());
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("ChainConnection"));
+    }
+}

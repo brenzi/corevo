@@ -1,10 +1,10 @@
 use corevo_lib::VoteStatus;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 
 use crate::app::{App, LoadingState};
@@ -17,16 +17,20 @@ impl VotingComponent {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Length(6),  // Context info
-                Constraint::Min(10),    // Vote options or context selection
-                Constraint::Length(3),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Length(6), // Context info
+                Constraint::Min(10),   // Vote options or context selection
+                Constraint::Length(3), // Help
             ])
             .split(frame.area());
 
         // Title
         let title = Paragraph::new("Voting Session")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::BOTTOM));
         frame.render_widget(title, chunks[0]);
 
@@ -45,7 +49,9 @@ impl VotingComponent {
         } else if app.selected_context.is_some() {
             match app.get_current_vote_status() {
                 None => "1/2/3: Select vote | Enter: Commit | Backspace: Back | Esc: Home",
-                Some(VoteStatus::Committed(_)) => "Enter/R: Reveal vote | Backspace: Back | Esc: Home",
+                Some(VoteStatus::Committed(_)) => {
+                    "Enter/R: Reveal vote | Backspace: Back | Esc: Home"
+                }
                 Some(VoteStatus::Revealed(_)) => "Backspace: Back to list | Esc: Home",
                 _ => "Backspace: Back to list | Esc: Home",
             }
@@ -83,7 +89,10 @@ impl VotingComponent {
                 };
                 Line::from(vec![
                     Span::styled("Status: Revealed - ", Style::default().fg(Color::Green)),
-                    Span::styled(format!("{}", vote), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("{}", vote),
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ),
                 ])
             }
             Some(VoteStatus::Revealed(Err(e))) => Line::from(Span::styled(
@@ -96,7 +105,7 @@ impl VotingComponent {
             )),
         };
 
-        let context_text = vec![
+        let mut context_text = vec![
             Line::from(vec![
                 Span::styled("Context: ", Style::default().fg(Color::Yellow)),
                 Span::raw(format!("{}", ctx)),
@@ -105,8 +114,20 @@ impl VotingComponent {
             status_line,
         ];
 
-        let context_info = Paragraph::new(context_text)
-            .block(Block::default().title("Current Session").borders(Borders::ALL));
+        // Add warning for public proposals
+        if app.is_public_proposal() {
+            context_text.push(Line::from(""));
+            context_text.push(Line::from(Span::styled(
+                "⚠ Public proposal: your vote will be publicly verifiable once revealed",
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+
+        let context_info = Paragraph::new(context_text).block(
+            Block::default()
+                .title("Current Session")
+                .borders(Borders::ALL),
+        );
         frame.render_widget(context_info, chunks[1]);
 
         // Check loading state for vote operations
@@ -162,16 +183,18 @@ impl VotingComponent {
 
     fn render_vote_options(app: &App, frame: &mut Frame, chunks: &[ratatui::layout::Rect]) {
         if app.secret_uri.is_empty() {
-            let placeholder = Paragraph::new(
-                "Configure your account in Config to cast your vote",
-            )
-            .style(Style::default().fg(Color::DarkGray))
-            .block(Block::default().title("Cast Your Vote").borders(Borders::ALL));
+            let placeholder = Paragraph::new("Configure your account in Config to cast your vote")
+                .style(Style::default().fg(Color::DarkGray))
+                .block(
+                    Block::default()
+                        .title("Cast Your Vote")
+                        .borders(Borders::ALL),
+                );
             frame.render_widget(placeholder, chunks[2]);
             return;
         }
 
-        let vote_options = vec![
+        let vote_options = [
             ("1", "Aye", "Vote in favor", Color::Green),
             ("2", "Nay", "Vote against", Color::Red),
             ("3", "Abstain", "Abstain from voting", Color::Blue),
@@ -195,7 +218,11 @@ impl VotingComponent {
             .collect();
 
         let menu = List::new(items)
-            .block(Block::default().title("Cast Your Vote (Enter to commit)").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("Cast Your Vote (Enter to commit)")
+                    .borders(Borders::ALL),
+            )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
         frame.render_widget(menu, chunks[2]);
     }
@@ -207,7 +234,9 @@ impl VotingComponent {
                 Line::from(""),
                 Line::from(Span::styled(
                     "Are you sure you want to reveal your vote?",
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 )),
                 Line::from(""),
                 Line::from("Once revealed, your vote will be visible to everyone."),
@@ -225,11 +254,12 @@ impl VotingComponent {
                 ]),
             ];
 
-            let confirm_dialog = Paragraph::new(content)
-                .block(Block::default()
+            let confirm_dialog = Paragraph::new(content).block(
+                Block::default()
                     .title("Confirm Reveal")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow)));
+                    .border_style(Style::default().fg(Color::Yellow)),
+            );
             frame.render_widget(confirm_dialog, chunks[2]);
             return;
         }
@@ -249,7 +279,9 @@ impl VotingComponent {
                 Span::styled("> ", Style::default().fg(Color::Yellow)),
                 Span::styled(
                     "[Enter/R] Reveal my vote to the group",
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
         ];
@@ -259,7 +291,11 @@ impl VotingComponent {
         frame.render_widget(reveal_info, chunks[2]);
     }
 
-    fn render_revealed_vote(frame: &mut Frame, chunks: &[ratatui::layout::Rect], vote: &corevo_lib::CorevoVote) {
+    fn render_revealed_vote(
+        frame: &mut Frame,
+        chunks: &[ratatui::layout::Rect],
+        vote: &corevo_lib::CorevoVote,
+    ) {
         let (vote_str, color) = match vote {
             corevo_lib::CorevoVote::Aye => ("AYE", Color::Green),
             corevo_lib::CorevoVote::Nay => ("NAY", Color::Red),
@@ -289,8 +325,11 @@ impl VotingComponent {
             )),
         ];
 
-        let revealed_info = Paragraph::new(content)
-            .block(Block::default().title("Vote Revealed").borders(Borders::ALL));
+        let revealed_info = Paragraph::new(content).block(
+            Block::default()
+                .title("Vote Revealed")
+                .borders(Borders::ALL),
+        );
         frame.render_widget(revealed_info, chunks[2]);
     }
 
@@ -310,18 +349,14 @@ impl VotingComponent {
             ]
         } else {
             match &app.history_loading {
-                LoadingState::Idle => vec![
-                    Line::from(Span::styled(
-                        "Press Enter or 'r' to load voting contexts",
-                        Style::default().fg(Color::Yellow),
-                    )),
-                ],
-                LoadingState::Loading => vec![
-                    Line::from(Span::styled(
-                        "Loading voting contexts...",
-                        Style::default().fg(Color::Yellow),
-                    )),
-                ],
+                LoadingState::Idle => vec![Line::from(Span::styled(
+                    "Press Enter or 'r' to load voting contexts",
+                    Style::default().fg(Color::Yellow),
+                ))],
+                LoadingState::Loading => vec![Line::from(Span::styled(
+                    "Loading voting contexts...",
+                    Style::default().fg(Color::Yellow),
+                ))],
                 LoadingState::Error(e) => vec![
                     Line::from(Span::styled(
                         format!("Error: {}", e),
@@ -334,9 +369,10 @@ impl VotingComponent {
                     )),
                 ],
                 LoadingState::Loaded => {
+                    let mut lines = Vec::new();
                     if let Some(addr) = &app.derived_address {
                         let addr_short = if addr.len() > 20 {
-                            format!("{}..{}", &addr[..10], &addr[addr.len()-8..])
+                            format!("{}..{}", &addr[..10], &addr[addr.len() - 8..])
                         } else {
                             addr.clone()
                         };
@@ -345,24 +381,23 @@ impl VotingComponent {
                         } else {
                             Span::styled(" (click to copy)", Style::default().fg(Color::DarkGray))
                         };
-                        vec![
-                            Line::from(vec![
-                                Span::styled("Account: ", Style::default().fg(Color::Yellow)),
-                                Span::styled(addr_short, Style::default().fg(Color::Green).add_modifier(Modifier::UNDERLINED)),
-                                copy_hint,
-                            ]),
-                            Line::from(""),
-                            Line::from(Span::styled(
-                                "Select a context below to cast your vote",
-                                Style::default().fg(Color::Green),
-                            )),
-                        ]
-                    } else {
-                        vec![Line::from(Span::styled(
-                            "Select a context below to cast your vote",
-                            Style::default().fg(Color::Green),
-                        ))]
+                        lines.push(Line::from(vec![
+                            Span::styled("Account: ", Style::default().fg(Color::Yellow)),
+                            Span::styled(
+                                addr_short,
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::UNDERLINED),
+                            ),
+                            copy_hint,
+                        ]));
+                        lines.push(Line::from(""));
                     }
+                    lines.push(Line::from(Span::styled(
+                        "Select a context below to cast your vote (r to refresh)",
+                        Style::default().fg(Color::Green),
+                    )));
+                    lines
                 }
             }
         };
@@ -373,89 +408,116 @@ impl VotingComponent {
 
         // Show pending vote contexts
         if app.secret_uri.is_empty() {
-            let placeholder = Paragraph::new("Configure your account to see available voting contexts")
-                .style(Style::default().fg(Color::DarkGray))
-                .block(Block::default().title("Pending Votes").borders(Borders::ALL));
+            let placeholder =
+                Paragraph::new("Configure your account to see available voting contexts")
+                    .style(Style::default().fg(Color::DarkGray))
+                    .block(
+                        Block::default()
+                            .title("Pending Votes")
+                            .borders(Borders::ALL),
+                    );
             frame.render_widget(placeholder, chunks[2]);
             return;
         }
 
-        match &app.history_loading {
-            LoadingState::Idle => {
-                let placeholder = Paragraph::new("Press Enter to load contexts")
-                    .style(Style::default().fg(Color::DarkGray))
-                    .block(Block::default().title("Pending Votes").borders(Borders::ALL));
-                frame.render_widget(placeholder, chunks[2]);
-            }
-            LoadingState::Loading => {
-                let placeholder = Paragraph::new("Loading...")
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(Block::default().title("Pending Votes").borders(Borders::ALL));
-                frame.render_widget(placeholder, chunks[2]);
-            }
-            LoadingState::Error(_) => {
-                let placeholder = Paragraph::new("Failed to load contexts")
-                    .style(Style::default().fg(Color::Red))
-                    .block(Block::default().title("Pending Votes").borders(Borders::ALL));
-                frame.render_widget(placeholder, chunks[2]);
-            }
-            LoadingState::Loaded => {
-                let pending_contexts = app.get_pending_vote_contexts();
+        // Show list if we have data (even during background refresh)
+        let has_data = app.history.is_some();
+        let show_loading = matches!(app.history_loading, LoadingState::Loading) && !has_data;
+        let show_list = has_data
+            || matches!(
+                app.history_loading,
+                LoadingState::Loaded | LoadingState::Idle
+            );
 
-                if pending_contexts.is_empty() {
-                    let placeholder = Paragraph::new(
+        if matches!(app.history_loading, LoadingState::Idle) && !has_data {
+            let placeholder = Paragraph::new("Press Enter to load contexts")
+                .style(Style::default().fg(Color::DarkGray))
+                .block(
+                    Block::default()
+                        .title("Pending Votes")
+                        .borders(Borders::ALL),
+                );
+            frame.render_widget(placeholder, chunks[2]);
+        } else if show_loading {
+            let placeholder = Paragraph::new("Loading...")
+                .style(Style::default().fg(Color::Yellow))
+                .block(
+                    Block::default()
+                        .title("Pending Votes")
+                        .borders(Borders::ALL),
+                );
+            frame.render_widget(placeholder, chunks[2]);
+        } else if matches!(app.history_loading, LoadingState::Error(_)) && !has_data {
+            let placeholder = Paragraph::new("Failed to load contexts")
+                .style(Style::default().fg(Color::Red))
+                .block(
+                    Block::default()
+                        .title("Pending Votes")
+                        .borders(Borders::ALL),
+                );
+            frame.render_widget(placeholder, chunks[2]);
+        } else if show_list {
+            let pending_contexts = app.get_pending_vote_contexts();
+
+            if pending_contexts.is_empty() {
+                let placeholder = Paragraph::new(
                         "No pending votes found.\n\nYou may not be invited to any contexts,\nor you have already completed voting in all of them."
                     )
                     .style(Style::default().fg(Color::DarkGray))
                     .block(Block::default().title("Pending Votes").borders(Borders::ALL));
-                    frame.render_widget(placeholder, chunks[2]);
-                } else {
-                    // Get user's vote status for each context to show in list
-                    let account_id = app.get_current_account_id().cloned();
-                    let history = app.history.as_ref();
+                frame.render_widget(placeholder, chunks[2]);
+            } else {
+                // Get user's vote status for each context to show in list
+                let account_id = app.get_current_account_id().cloned();
+                let history = app.history.as_ref();
 
-                    let items: Vec<ListItem> = pending_contexts
-                        .iter()
-                        .map(|ctx| {
-                            // Determine status for this context
-                            let status = if let (Some(acc), Some(hist)) = (&account_id, history) {
-                                let hashable = corevo_lib::HashableAccountId::from(acc.clone());
-                                hist.contexts.get(*ctx)
-                                    .and_then(|summary| summary.votes.get(&hashable))
-                            } else {
-                                None
-                            };
+                let items: Vec<ListItem> = pending_contexts
+                    .iter()
+                    .map(|ctx| {
+                        // Determine status for this context
+                        let status = if let (Some(acc), Some(hist)) = (&account_id, history) {
+                            let hashable = corevo_lib::HashableAccountId::from(acc.clone());
+                            hist.contexts
+                                .get(*ctx)
+                                .and_then(|summary| summary.votes.get(&hashable))
+                        } else {
+                            None
+                        };
 
-                            let (status_text, status_color) = match status {
-                                None => ("[commit]", Color::Yellow),
-                                Some(VoteStatus::Committed(_)) => ("[reveal]", Color::Cyan),
-                                _ => ("", Color::White),
-                            };
+                        let (status_text, status_color) = match status {
+                            None => ("[commit]", Color::Yellow),
+                            Some(VoteStatus::Committed(_)) => ("[reveal]", Color::Cyan),
+                            _ => ("", Color::White),
+                        };
 
-                            ListItem::new(Line::from(vec![
-                                Span::styled("  ", Style::default()),
-                                Span::raw(format!("{}", ctx)),
-                                Span::raw(" "),
-                                Span::styled(status_text, Style::default().fg(status_color)),
-                            ]))
-                        })
-                        .collect();
+                        ListItem::new(Line::from(vec![
+                            Span::styled("  ", Style::default()),
+                            Span::raw(format!("{}", ctx)),
+                            Span::raw(" "),
+                            Span::styled(status_text, Style::default().fg(status_color)),
+                        ]))
+                    })
+                    .collect();
 
-                    let list = List::new(items)
-                        .block(Block::default()
+                let list = List::new(items)
+                    .block(
+                        Block::default()
                             .title(format!("Pending Votes ({})", pending_contexts.len()))
-                            .borders(Borders::ALL))
-                        .highlight_style(
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-                        )
-                        .highlight_symbol("> ");
+                            .borders(Borders::ALL),
+                    )
+                    .highlight_style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+                    )
+                    .highlight_symbol("> ");
 
-                    let mut list_state = ListState::default();
-                    list_state.select(Some(app.selected_index.min(pending_contexts.len().saturating_sub(1))));
-                    frame.render_stateful_widget(list, chunks[2], &mut list_state);
-                }
+                let mut list_state = ListState::default();
+                list_state.select(Some(
+                    app.selected_index
+                        .min(pending_contexts.len().saturating_sub(1)),
+                ));
+                frame.render_stateful_widget(list, chunks[2], &mut list_state);
             }
         }
     }

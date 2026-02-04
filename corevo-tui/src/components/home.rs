@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame,
 };
 
 use crate::app::{App, LoadingState};
@@ -16,16 +16,20 @@ impl HomeComponent {
             .direction(Direction::Vertical)
             .margin(2)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Length(9),  // Info box (chain, db, blank, account, balance)
-                Constraint::Min(10),    // Menu
-                Constraint::Length(3),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Length(9), // Info box (chain, db, blank, account, balance)
+                Constraint::Min(10),   // Menu
+                Constraint::Length(3), // Help
             ])
             .split(frame.area());
 
         // Title
         let title = Paragraph::new("CoReVo - Commit-Reveal Voting")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::BOTTOM));
         frame.render_widget(title, chunks[0]);
 
@@ -53,14 +57,20 @@ impl HomeComponent {
                     Span::styled(")", Style::default().fg(Color::DarkGray)),
                 ]
             } else {
-                vec![
-                    Span::styled(" (click to copy)", Style::default().fg(Color::DarkGray)),
-                ]
+                vec![Span::styled(
+                    " (click to copy)",
+                    Style::default().fg(Color::DarkGray),
+                )]
             };
 
             let mut account_line = vec![
                 Span::styled("Account: ", Style::default().fg(Color::Yellow)),
-                Span::styled(address.clone(), Style::default().fg(Color::Green).add_modifier(Modifier::UNDERLINED)),
+                Span::styled(
+                    address.clone(),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::UNDERLINED),
+                ),
             ];
             account_line.extend(account_suffix);
             info_text.push(Line::from(account_line));
@@ -80,13 +90,19 @@ impl HomeComponent {
                     if bal > 0 {
                         vec![
                             Span::styled("Balance: ", Style::default().fg(Color::Yellow)),
-                            Span::styled(app.formatted_balance().unwrap_or_default(), Style::default().fg(Color::Green)),
+                            Span::styled(
+                                app.formatted_balance().unwrap_or_default(),
+                                Style::default().fg(Color::Green),
+                            ),
                         ]
                     } else {
                         vec![
                             Span::styled("Balance: ", Style::default().fg(Color::Yellow)),
                             Span::styled("0 ", Style::default().fg(Color::Red)),
-                            Span::styled("(fund account to vote/propose)", Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                "(fund account to vote/propose)",
+                                Style::default().fg(Color::DarkGray),
+                            ),
                         ]
                     }
                 }
@@ -94,7 +110,10 @@ impl HomeComponent {
                     let short_err = if e.len() > 25 { &e[..25] } else { e };
                     vec![
                         Span::styled("Balance: ", Style::default().fg(Color::Yellow)),
-                        Span::styled(format!("Error: {} ", short_err), Style::default().fg(Color::Red)),
+                        Span::styled(
+                            format!("Error: {} ", short_err),
+                            Style::default().fg(Color::Red),
+                        ),
                         Span::styled("(fund account first)", Style::default().fg(Color::DarkGray)),
                     ]
                 }
@@ -103,7 +122,10 @@ impl HomeComponent {
         } else if app.secret_uri.is_empty() {
             info_text.push(Line::from(vec![
                 Span::styled("Account: ", Style::default().fg(Color::Yellow)),
-                Span::styled("Not configured (go to Config)", Style::default().fg(Color::Red)),
+                Span::styled(
+                    "Not configured (go to Config)",
+                    Style::default().fg(Color::Red),
+                ),
             ]));
         } else {
             info_text.push(Line::from(vec![
@@ -112,8 +134,8 @@ impl HomeComponent {
             ]));
         }
 
-        let info = Paragraph::new(info_text)
-            .block(Block::default().title("Status").borders(Borders::ALL));
+        let info =
+            Paragraph::new(info_text).block(Block::default().title("Status").borders(Borders::ALL));
         frame.render_widget(info, chunks[1]);
 
         // Menu - check if account can perform on-chain actions
@@ -141,10 +163,25 @@ impl HomeComponent {
             }
         };
 
-        let menu_items = vec![
-            ("1", "History", "View past voting contexts and results", false),
-            ("2", "Vote", vote_desc, !can_use_chain && app.derived_address.is_some()),
-            ("3", "Propose", propose_desc, !can_use_chain && app.derived_address.is_some()),
+        let menu_items = [
+            (
+                "1",
+                "History",
+                "View past voting contexts and results",
+                false,
+            ),
+            (
+                "2",
+                "Vote",
+                vote_desc,
+                !can_use_chain && app.derived_address.is_some(),
+            ),
+            (
+                "3",
+                "Propose",
+                propose_desc,
+                !can_use_chain && app.derived_address.is_some(),
+            ),
             ("4", "Config", "Edit settings and enter secret URI", false),
             ("5", "Announce Pubkey", announce_desc, !can_announce),
             ("q", "Quit", "Exit the application", false),
@@ -156,9 +193,13 @@ impl HomeComponent {
             .map(|(i, (key, label, desc, is_disabled))| {
                 let style = if i == app.selected_index {
                     if *is_disabled {
-                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
                     }
                 } else if *is_disabled {
                     Style::default().fg(Color::DarkGray)
@@ -166,7 +207,14 @@ impl HomeComponent {
                     Style::default()
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("[{}] ", key), Style::default().fg(if *is_disabled { Color::DarkGray } else { Color::Cyan })),
+                    Span::styled(
+                        format!("[{}] ", key),
+                        Style::default().fg(if *is_disabled {
+                            Color::DarkGray
+                        } else {
+                            Color::Cyan
+                        }),
+                    ),
                     Span::styled(*label, style),
                     Span::styled(format!(" - {}", desc), Style::default().fg(Color::DarkGray)),
                 ]))

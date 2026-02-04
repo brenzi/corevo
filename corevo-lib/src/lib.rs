@@ -34,20 +34,24 @@ pub mod indexer;
 pub mod primitives;
 
 // Re-export main types for convenience
-pub use chain::ChainClient;
+pub use chain::{ChainApi, ChainClient};
 pub use config::Config;
 pub use crypto::{
-    decrypt_from_sender, derive_account_from_uri, derive_address_from_uri,
-    encode_ss58, encrypt_for_recipient, format_account_ss58, format_balance,
-    ss58_prefix_for_chain, token_info_for_chain, ChainTokenInfo,
-    SS58_PREFIX_KUSAMA, SS58_PREFIX_POLKADOT, SS58_PREFIX_SUBSTRATE,
+    ChainTokenInfo, SS58_PREFIX_KUSAMA, SS58_PREFIX_POLKADOT, SS58_PREFIX_SUBSTRATE,
+    decrypt_from_sender, derive_account_from_uri, derive_address_from_uri, encode_ss58,
+    encrypt_for_recipient, format_account_ss58, format_balance, ss58_prefix_for_chain,
+    token_info_for_chain,
 };
 pub use error::{CorevoError, Result};
-pub use indexer::{ContextSummary, HashableAccountId, HistoryQuery, VoteStatus, VotingHistory};
+pub use indexer::{
+    ContextSummary, HashableAccountId, HistoryQuery, MongoRemarkRepository, RemarkAggregation,
+    RemarkRecord, RemarkRepository, VoteStatus, VotingHistory, aggregate_remarks,
+    build_voting_history, decrypt_common_salts, reveal_votes,
+};
 pub use primitives::{
-    Commitment, CorevoContext, CorevoMessage, CorevoRemark, CorevoRemarkV1, CorevoVote,
-    CorevoVoteAndSalt, PrefixedCorevoRemark, PublicKeyForEncryption, Salt, VotingAccount,
-    COREVO_REMARK_PREFIX,
+    COREVO_REMARK_PREFIX, Commitment, CorevoContext, CorevoMessage, CorevoRemark, CorevoRemarkV1,
+    CorevoVote, CorevoVoteAndSalt, PrefixedCorevoRemark, PublicKeyForEncryption, Salt,
+    VotingAccount,
 };
 
 // Re-export subxt types that are commonly needed
