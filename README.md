@@ -72,6 +72,33 @@ Run the cli tool (currently hardcoded to Kusama Asset Hub)
 cargo run --release
 ```
 
+you will be greeted by this TUI:
+ ```
+ CoReVo - Commit-Reveal Voting                                                    
+                                                                                   
+  ─────────────────────────────────────────────────────────────────────────────────
+  ┌Status─────────────────────────────────────────────────────────────────────────┐
+  │Chain: wss://sys.ibp.network/asset-hub-kusama:443                              │
+  │Database: litescan_kusama_assethub                                             │
+  │                                                                               │
+  │Account: Not configured (go to Config)                                         │
+  │                                                                               │
+  │                                                                               │
+  └───────────────────────────────────────────────────────────────────────────────┘
+  ┌Menu───────────────────────────────────────────────────────────────────────────┐
+  │[1] History - View past voting contexts and results                            │
+  │[2] Vote - Participate in active voting sessions                               │
+  │[3] Propose - Create a new voting context                                      │
+  │[4] Config - Edit settings and enter secret URI                                │
+  │[5] Announce Pubkey - Load history first to check status                       │
+  │[q] Quit - Exit the application                                                │
+  │                                                                               │
+  │                                                                               │
+  └───────────────────────────────────────────────────────────────────────────────┘
+  ─────────────────────────────────────────────────────────────────────────────────
+  Press number keys to navigate, or use arrow keys and Enter                 
+  ```
+
 ### Prepare Account
 
 Except for *History*, all actions will require you to input your seed phrase in *Config*. 
