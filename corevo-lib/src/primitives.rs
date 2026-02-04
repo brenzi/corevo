@@ -1,31 +1,40 @@
 use std::fmt::Display;
+
 use blake2::{Blake2b512, Digest};
 use codec::{Decode, Encode, Input, Output};
 use subxt::utils::AccountId32;
 use subxt_signer::sr25519::Keypair;
-use crate::COREVO_REMARK_PREFIX;
-use x25519_dalek::{StaticSecret, PublicKey as X25519PublicKey};
-use crate::chain_helpers::hex_encode;
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
+/// Prefix for all CoReVo remarks on-chain (0xcc00ee)
+pub const COREVO_REMARK_PREFIX: [u8; 3] = hex_literal::hex!("cc00ee");
+
+/// Voting account with both SR25519 (signing) and X25519 (encryption) keypairs
 pub struct VotingAccount {
     pub sr25519_keypair: Keypair,
     pub x25519_public: X25519PublicKey,
     pub x25519_secret: StaticSecret,
 }
 
+/// 32-byte salt used in commitment scheme
 pub type Salt = [u8; 32];
+
+/// 32-byte commitment hash
 pub type Commitment = [u8; 32];
+
+/// 32-byte X25519 public key for encryption
 pub type PublicKeyForEncryption = [u8; 32];
 
-// ensure backwards compatibility if we can migrate our message formats in the future
+/// Versioned envelope for CoReVo remarks - allows future protocol upgrades
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
 pub enum CorevoRemark {
-    V1(CorevoRemarkV1)
+    V1(CorevoRemarkV1),
 }
 
-/// for easy filtering, we prefix the encoded remark
+/// Prefixed remark for easy on-chain filtering via litescan/MongoDB
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PrefixedCorevoRemark(pub CorevoRemark);
+
 impl Encode for PrefixedCorevoRemark {
     fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
         dest.write(&COREVO_REMARK_PREFIX);
@@ -55,6 +64,7 @@ impl Decode for PrefixedCorevoRemark {
     }
 }
 
+/// Voting context identifier - can be arbitrary bytes or human-readable string
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone, Hash)]
 pub enum CorevoContext {
     Bytes(Vec<u8>),
@@ -65,37 +75,42 @@ impl Display for CorevoContext {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             CorevoContext::Bytes(bytes) => {
-                write!(f, "Bytes({})", hex_encode(bytes))
+                write!(f, "{}", hex_encode(bytes))
             }
             CorevoContext::String(s) => {
-                write!(f, "String({})", s)
+                write!(f, "{}", s)
             }
         }
     }
 }
 
-
+/// V1 remark structure with context and message
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
 pub struct CorevoRemarkV1 {
     pub context: CorevoContext,
-    pub msg: CorevoMessage
+    pub msg: CorevoMessage,
 }
 
 impl Display for CorevoRemarkV1 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "CorevoRemarkV1(context: {}, msg: {})", self.context, self.msg)
+        write!(
+            f,
+            "CorevoRemarkV1(context: {}, msg: {})",
+            self.context, self.msg
+        )
     }
 }
 
+/// Message types for different voting phases
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
 pub enum CorevoMessage {
-    /// tell the world your X25519 pubkey so anyone can send you encrypted messages
+    /// Announce X25519 public key for encrypted communication
     AnnounceOwnPubKey(PublicKeyForEncryption),
-    /// Invite a voter to participate and share an E2EE common salt for the group
+    /// Invite a voter by sending them an encrypted common salt
     InviteVoter(AccountId32, Vec<u8>),
-    /// Commit your salted vote hash and persist the [`CorevoVoteAndSalt`], encrypted to yourself
+    /// Commit a salted vote hash + self-encrypted vote for persistence
     Commit(Commitment, Vec<u8>),
-    /// Reveal your indovidual salted for the vote you committed to
+    /// Reveal the one-time salt to verify the vote
     RevealOneTimeSalt(Salt),
 }
 
@@ -106,7 +121,12 @@ impl Display for CorevoMessage {
                 write!(f, "AnnounceOwnPubKey(x25519pub: {})", hex_encode(pubkey_bytes))
             }
             CorevoMessage::InviteVoter(account, common_salt_encrypted) => {
-                write!(f, "InviteVoter(account: {}, encrypted_common_salt: {})", account, hex_encode(common_salt_encrypted))
+                write!(
+                    f,
+                    "InviteVoter(account: {}, encrypted_common_salt: {})",
+                    account,
+                    hex_encode(common_salt_encrypted)
+                )
             }
             CorevoMessage::Commit(commitment, _) => {
                 write!(f, "Commit({})", hex_encode(commitment))
@@ -117,16 +137,18 @@ impl Display for CorevoMessage {
         }
     }
 }
+
+/// Vote with its one-time salt for commitment
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
 pub struct CorevoVoteAndSalt {
     pub vote: CorevoVote,
-    pub onetime_salt: Salt
+    pub onetime_salt: Salt,
 }
 
 impl CorevoVoteAndSalt {
+    /// Generate commitment hash: BLAKE2b(vote || onetime_salt || common_salt)
     pub fn commit(&self, maybe_common_salt: Option<Salt>) -> Commitment {
         let mut hasher = Blake2b512::new();
-        // Include the vote in the commitment to bind it cryptographically
         hasher.update(self.vote.encode());
         hasher.update(self.onetime_salt);
         if let Some(common_salt) = maybe_common_salt {
@@ -138,7 +160,7 @@ impl CorevoVoteAndSalt {
         hash_bytes
     }
 
-    /// Try to reveal the vote by brute-forcing all possible vote options against a commitment
+    /// Brute-force reveal by trying all vote options against commitment
     pub fn reveal_vote_by_bruteforce(
         onetime_salt: Salt,
         common_salt: Salt,
@@ -154,9 +176,35 @@ impl CorevoVoteAndSalt {
     }
 }
 
+/// Vote options
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum CorevoVote {
     Aye,
     Nay,
     Abstain,
+}
+
+impl Display for CorevoVote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CorevoVote::Aye => write!(f, "Aye"),
+            CorevoVote::Nay => write!(f, "Nay"),
+            CorevoVote::Abstain => write!(f, "Abstain"),
+        }
+    }
+}
+
+/// Hex encodes data with "0x" prefix
+pub fn hex_encode(data: &[u8]) -> String {
+    format!("0x{}", hex::encode(data))
+}
+
+/// Decode hex string, handling optional "0x" prefix
+pub fn decode_hex<T: AsRef<[u8]>>(message: T) -> Result<Vec<u8>, hex::FromHexError> {
+    let message = message.as_ref();
+    let message = match message {
+        [b'0', b'x', hex_value @ ..] => hex_value,
+        _ => message,
+    };
+    hex::decode(message)
 }
