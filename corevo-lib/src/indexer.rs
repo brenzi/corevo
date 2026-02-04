@@ -4,6 +4,7 @@ use std::str::FromStr;
 use async_trait::async_trait;
 use codec::Decode;
 use futures::TryStreamExt;
+use log::debug;
 use mongodb::{
     Client,
     bson::{Bson, doc},
@@ -147,6 +148,11 @@ impl RemarkRepository for MongoRemarkRepository {
                     _ => None,
                 });
 
+            let block_number = doc
+                .get_i64("blockNumber")
+                .ok()
+                .or_else(|| doc.get_i32("blockNumber").ok().map(|n| n as i64));
+
             let Some(sender) = doc
                 .get_document("signer")
                 .ok()
@@ -178,12 +184,23 @@ impl RemarkRepository for MongoRemarkRepository {
                 continue;
             }
 
+            debug!(
+                "Fetched remark: block={}, sender={}, context={}, msg={}",
+                block_number
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "?".to_string()),
+                sender,
+                remark_v1.context,
+                remark_v1.msg
+            );
+
             records.push(RemarkRecord {
                 sender,
                 remark: remark_v1,
             });
         }
 
+        debug!("Fetched {} CoReVo remarks total", records.len());
         Ok(records)
     }
 }
@@ -339,27 +356,31 @@ pub fn decrypt_common_salts(
 ///
 /// Phase 3 of the history processing pipeline.
 pub fn reveal_votes(agg: &mut RemarkAggregation) {
-    for (context, config) in agg.context_configs.iter() {
-        if config.common_salts.is_empty() {
-            continue;
-        }
+    // Collect all contexts that have commits and revealed salts
+    let contexts_to_process: Vec<_> = agg
+        .context_commits
+        .keys()
+        .filter(|ctx| agg.context_revealed_salts.contains_key(*ctx))
+        .cloned()
+        .collect();
 
-        let Some(commits) = agg.context_commits.get(context) else {
-            continue;
-        };
+    for context in contexts_to_process {
+        let commits = agg.context_commits.get(&context).unwrap();
+        let revealed_salts = agg.context_revealed_salts.get(&context).unwrap();
+        let common_salts = agg
+            .context_configs
+            .get(&context)
+            .map(|c| &c.common_salts[..])
+            .unwrap_or(&[]);
 
-        let Some(revealed_salts) = agg.context_revealed_salts.get(context) else {
-            continue;
-        };
-
-        let Some(votes) = agg.context_votes.get_mut(context) else {
-            continue;
-        };
+        let votes = agg.context_votes.entry(context.clone()).or_default();
 
         for (voter, commit_data) in commits.iter() {
             if let Some(onetime_salt) = revealed_salts.get(voter) {
                 let mut found_vote = None;
-                for common_salt in &config.common_salts {
+
+                // First try with common salts (if any)
+                for common_salt in common_salts {
                     if let Some(vote) = CorevoVoteAndSalt::reveal_vote_by_bruteforce(
                         *onetime_salt,
                         *common_salt,
@@ -369,6 +390,16 @@ pub fn reveal_votes(agg: &mut RemarkAggregation) {
                         break;
                     }
                 }
+
+                // If no common salts or none matched, try without common salt (public context)
+                if found_vote.is_none() {
+                    found_vote = CorevoVoteAndSalt::reveal_vote_by_bruteforce_with_optional_salt(
+                        *onetime_salt,
+                        None,
+                        commit_data.commitment,
+                    );
+                }
+
                 if let Some(vote) = found_vote {
                     votes.insert(voter.clone(), VoteStatus::Revealed(Ok(vote)));
                 } else {

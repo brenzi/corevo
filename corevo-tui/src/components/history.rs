@@ -189,7 +189,7 @@ impl HistoryComponent {
                                         )
                                     }
                                     Some(VoteStatus::Revealed(Err(_))) => Span::styled(
-                                        "****** (unknown salt)",
+                                        "****** (revealed with unknown common salt)",
                                         Style::default().fg(Color::DarkGray),
                                     ),
                                     Some(VoteStatus::RevealedWithoutCommitment) => {

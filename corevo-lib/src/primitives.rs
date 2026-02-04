@@ -170,9 +170,22 @@ impl CorevoVoteAndSalt {
         common_salt: Salt,
         commitment: Commitment,
     ) -> Option<CorevoVote> {
+        Self::reveal_vote_by_bruteforce_with_optional_salt(
+            onetime_salt,
+            Some(common_salt),
+            commitment,
+        )
+    }
+
+    /// Brute-force reveal with optional common salt (for public contexts)
+    pub fn reveal_vote_by_bruteforce_with_optional_salt(
+        onetime_salt: Salt,
+        common_salt: Option<Salt>,
+        commitment: Commitment,
+    ) -> Option<CorevoVote> {
         for vote in [CorevoVote::Aye, CorevoVote::Nay, CorevoVote::Abstain] {
             let candidate = CorevoVoteAndSalt { vote, onetime_salt };
-            if candidate.commit(Some(common_salt)) == commitment {
+            if candidate.commit(common_salt) == commitment {
                 return Some(vote);
             }
         }

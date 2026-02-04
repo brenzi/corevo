@@ -356,7 +356,7 @@ impl App {
                 self.should_quit = true;
             }
             Action::Tick => {
-                // Periodic update logic if needed
+                // Reserved for future periodic tasks
             }
             Action::Render => {
                 // Render is handled in main loop
@@ -682,19 +682,19 @@ impl App {
             Action::CommitVote(_vote) => {
                 self.voting_loading = LoadingState::Loading;
             }
-            Action::CommitVoteResult(result) => {
-                match result {
-                    Ok(()) => {
-                        self.voting_loading = LoadingState::Loaded;
-                        // Reload history to see updated vote status
-                        self.history_loading = LoadingState::Idle;
-                        let _ = self.action_tx.send(Action::LoadHistory);
-                    }
-                    Err(e) => {
-                        self.voting_loading = LoadingState::Error(e);
-                    }
+            Action::CommitVoteResult(result) => match result {
+                Ok(()) => {
+                    self.voting_loading = LoadingState::Loaded;
+                    // Clear selected context to go back to pending contexts list
+                    self.selected_context = None;
+                    self.selected_index = 0;
+                    // Mark history as needing refresh (user can press 'r')
+                    self.history_loading = LoadingState::Idle;
                 }
-            }
+                Err(e) => {
+                    self.voting_loading = LoadingState::Error(e);
+                }
+            },
             Action::ShowRevealConfirm => {
                 self.show_reveal_confirm = true;
             }
@@ -705,19 +705,19 @@ impl App {
                 self.show_reveal_confirm = false;
                 self.voting_loading = LoadingState::Loading;
             }
-            Action::RevealVoteResult(result) => {
-                match result {
-                    Ok(()) => {
-                        self.voting_loading = LoadingState::Loaded;
-                        // Reload history to see updated vote status
-                        self.history_loading = LoadingState::Idle;
-                        let _ = self.action_tx.send(Action::LoadHistory);
-                    }
-                    Err(e) => {
-                        self.voting_loading = LoadingState::Error(e);
-                    }
+            Action::RevealVoteResult(result) => match result {
+                Ok(()) => {
+                    self.voting_loading = LoadingState::Loaded;
+                    // Clear selected context to go back to pending contexts list
+                    self.selected_context = None;
+                    self.selected_index = 0;
+                    // Mark history as needing refresh (user can press 'r')
+                    self.history_loading = LoadingState::Idle;
                 }
-            }
+                Err(e) => {
+                    self.voting_loading = LoadingState::Error(e);
+                }
+            },
             Action::VoteCast(result) => {
                 if let Err(e) = result {
                     self.error_message = Some(e);
@@ -899,6 +899,20 @@ impl App {
         self.copied_feedback
             .map(|t| t.elapsed().as_secs() < 2)
             .unwrap_or(false)
+    }
+
+    /// Check if the selected context is a public proposal (no common salt)
+    pub fn is_public_proposal(&self) -> bool {
+        let Some(ctx) = self.selected_context.as_ref() else {
+            return false;
+        };
+        let Some(history) = self.history.as_ref() else {
+            return false;
+        };
+        let Some(summary) = history.contexts.get(ctx) else {
+            return false;
+        };
+        summary.common_salts.is_empty()
     }
 
     /// Check if a home menu item is disabled

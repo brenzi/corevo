@@ -22,7 +22,26 @@ use tui::Tui;
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
-    env_logger::init();
+
+    // Set up file logging to avoid interfering with TUI
+    if std::env::var("RUST_LOG").is_ok() {
+        use std::io::Write;
+        if let Ok(log_file) = std::fs::File::create("corevo-tui.log") {
+            env_logger::Builder::from_default_env()
+                .format(|buf, record| {
+                    writeln!(
+                        buf,
+                        "[{}] {}:{} - {}",
+                        record.level(),
+                        record.file().unwrap_or("unknown"),
+                        record.line().unwrap_or(0),
+                        record.args()
+                    )
+                })
+                .target(env_logger::Target::Pipe(Box::new(log_file)))
+                .init();
+        }
+    }
 
     // Create action channel
     let (action_tx, mut action_rx) = mpsc::unbounded_channel::<Action>();
@@ -167,10 +186,52 @@ async fn main() -> Result<()> {
 fn handle_event(app: &App, event: Event) -> Vec<Action> {
     match event {
         Event::Tick => vec![Action::Tick],
-        Event::Key(key) => handle_key_event(app, key).into_iter().collect(),
-        Event::Mouse(mouse) => handle_mouse_event(app, mouse),
+        Event::Key(key) => {
+            let actions: Vec<_> = handle_key_event(app, key).into_iter().collect();
+            for action in &actions {
+                if is_loggable_action(action) {
+                    log::info!("[{:?}] {:?}", app.screen, action);
+                }
+            }
+            actions
+        }
+        Event::Mouse(mouse) => {
+            let actions = handle_mouse_event(app, mouse);
+            for action in &actions {
+                if is_loggable_action(action) {
+                    log::info!("[{:?}] {:?}", app.screen, action);
+                }
+            }
+            actions
+        }
         Event::Resize(_, _) => vec![Action::Render],
     }
+}
+
+/// Check if an action is worth logging (excludes navigation, input, and internal actions)
+fn is_loggable_action(action: &Action) -> bool {
+    !matches!(
+        action,
+        Action::Tick
+            | Action::Render
+            | Action::SelectPrev
+            | Action::SelectNext
+            | Action::SelectIndex(_)
+            | Action::ScrollUp(_)
+            | Action::ScrollDown(_)
+            | Action::InputChar(_)
+            | Action::InputBackspace
+            | Action::InputDelete
+            | Action::InputClear
+            | Action::InputPaste(_)
+            | Action::NextConfigField
+            | Action::PrevConfigField
+            | Action::NextProposeField
+            | Action::PrevProposeField
+            | Action::RecordClick(_, _)
+            | Action::ClearCopiedFeedback
+            | Action::CopiedFeedback
+    )
 }
 
 /// Handle keyboard events based on current screen
@@ -842,47 +903,54 @@ async fn propose_context(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Build all remarks in a batch for proper nonce sequencing
+    let mut remarks = Vec::new();
+
     // Step 1: Announce proposer's X25519 public key in this context
     let pubkey_bytes: [u8; 32] = account.x25519_public.to_bytes();
     let announce_msg = CorevoMessage::AnnounceOwnPubKey(pubkey_bytes);
-    let announce_remark = PrefixedCorevoRemark::from(CorevoRemark::V1(CorevoRemarkV1 {
-        context: context.clone(),
-        msg: announce_msg,
-    }));
+    remarks.push(PrefixedCorevoRemark::from(CorevoRemark::V1(
+        CorevoRemarkV1 {
+            context: context.clone(),
+            msg: announce_msg,
+        },
+    )));
 
-    client
-        .send_remark(&account.sr25519_keypair, announce_remark)
-        .await
-        .map_err(|e| format!("Failed to announce pubkey: {}", e))?;
+    // Step 2 & 3: Invite each selected voter
+    // If using common salt, generate and encrypt it for each voter
+    // If not using common salt, send empty encrypted_salt (public context)
+    let common_salt: Option<[u8; 32]> = if use_common_salt {
+        let mut salt = [0u8; 32];
+        thread_rng().fill_bytes(&mut salt);
+        Some(salt)
+    } else {
+        None
+    };
 
-    // Step 2 & 3: Only if using common salt - generate and send encrypted invites
-    if use_common_salt {
-        // Generate a common salt for this voting session
-        let mut common_salt = [0u8; 32];
-        thread_rng().fill_bytes(&mut common_salt);
-
-        // Invite each selected voter by sending encrypted common salt
-        for (voter_account_id, voter_pubkey_bytes) in selected_voters {
+    for (voter_account_id, voter_pubkey_bytes) in selected_voters {
+        let encrypted_salt = if let Some(salt) = common_salt {
             let voter_pubkey = X25519PublicKey::from(*voter_pubkey_bytes);
+            encrypt_for_recipient(&account.x25519_secret, &voter_pubkey, &salt)
+                .map_err(|e| format!("Failed to encrypt for voter: {}", e))?
+        } else {
+            // Public context - no encrypted salt
+            vec![]
+        };
 
-            // Encrypt the common salt for this voter
-            let encrypted_salt =
-                encrypt_for_recipient(&account.x25519_secret, &voter_pubkey, &common_salt)
-                    .map_err(|e| format!("Failed to encrypt for voter: {}", e))?;
-
-            let invite_msg = CorevoMessage::InviteVoter(voter_account_id.0.clone(), encrypted_salt);
-            let invite_remark = PrefixedCorevoRemark::from(CorevoRemark::V1(CorevoRemarkV1 {
+        let invite_msg = CorevoMessage::InviteVoter(voter_account_id.0.clone(), encrypted_salt);
+        remarks.push(PrefixedCorevoRemark::from(CorevoRemark::V1(
+            CorevoRemarkV1 {
                 context: context.clone(),
                 msg: invite_msg,
-            }));
-
-            client
-                .send_remark(&account.sr25519_keypair, invite_remark)
-                .await
-                .map_err(|e| format!("Failed to invite voter: {}", e))?;
-        }
+            },
+        )));
     }
-    // If not using common salt, the context is public - anyone can vote without invitation
+
+    // Send all remarks with proper nonce sequencing
+    client
+        .send_remarks_batch(&account.sr25519_keypair, remarks)
+        .await
+        .map_err(|e| format!("Failed to send remarks: {}", e))?;
 
     Ok(())
 }
@@ -929,100 +997,105 @@ async fn commit_vote(
         .map_err(|e| e.to_string())?;
 
     // Try to get the common salt - might be empty for public contexts or if we're not the proposer
-    let maybe_common_salt: Option<[u8; 32]> =
-        if let Some(full_summary) = full_history.contexts.get(&context) {
-            if let Some(salt) = full_summary.common_salts.first() {
-                Some(*salt)
-            } else if full_summary.voters.is_empty() {
-                // Public context - no common salt needed
-                None
-            } else {
-                // We're not the proposer - need to decrypt our invite manually
-                // Get the proposer's public key
-                let proposer_pubkey_bytes = full_history
-                    .voter_pubkeys
-                    .get(&HashableAccountId::from(full_summary.proposer.clone()))
-                    .ok_or("Proposer's public key not found")?;
-                let proposer_pubkey = X25519PublicKey::from(*proposer_pubkey_bytes);
+    let maybe_common_salt: Option<[u8; 32]> = if let Some(full_summary) =
+        full_history.contexts.get(&context)
+    {
+        if let Some(salt) = full_summary.common_salts.first() {
+            Some(*salt)
+        } else if full_summary.voters.is_empty() {
+            // Public context - no common salt needed
+            None
+        } else {
+            // We're not the proposer - need to decrypt our invite manually
+            // Get the proposer's public key
+            let proposer_pubkey_bytes = full_history
+                .voter_pubkeys
+                .get(&HashableAccountId::from(full_summary.proposer.clone()))
+                .ok_or("Proposer's public key not found")?;
+            let proposer_pubkey = X25519PublicKey::from(*proposer_pubkey_bytes);
 
-                // Query MongoDB to find the InviteVoter message for us
-                let ss58_prefix = ss58_prefix_for_chain(chain_url);
-                let my_ss58_address = format_account_ss58(&my_account_id, ss58_prefix);
+            // Query MongoDB to find the InviteVoter message for us
+            let ss58_prefix = ss58_prefix_for_chain(chain_url);
+            let my_ss58_address = format_account_ss58(&my_account_id, ss58_prefix);
 
-                let mut client_options: ClientOptions = ClientOptions::parse(&config.mongodb_uri)
-                    .await
-                    .map_err(|e: mongodb::error::Error| e.to_string())?;
-                client_options.app_name = Some("corevo-tui".to_string());
-                let mongo_client = Client::with_options(client_options)
-                    .map_err(|e: mongodb::error::Error| e.to_string())?;
+            let mut client_options: ClientOptions = ClientOptions::parse(&config.mongodb_uri)
+                .await
+                .map_err(|e: mongodb::error::Error| e.to_string())?;
+            client_options.app_name = Some("corevo-tui".to_string());
+            let mongo_client = Client::with_options(client_options)
+                .map_err(|e: mongodb::error::Error| e.to_string())?;
 
-                let db = mongo_client.database(&config.mongodb_db);
-                let coll = db.collection::<Document>("extrinsics");
+            let db = mongo_client.database(&config.mongodb_db);
+            let coll = db.collection::<Document>("extrinsics");
 
-                // Query for InviteVoter messages in this context
-                let filter = doc! {
-                    "method": "remark",
-                    "args.remark": { "$regex": "^0xcc00ee", "$options": "i" },
+            // Query for InviteVoter messages in this context
+            let filter = doc! {
+                "method": "remark",
+                "args.remark": { "$regex": "^0xcc00ee", "$options": "i" },
+            };
+
+            let mut cursor = coll
+                .find(filter)
+                .await
+                .map_err(|e: mongodb::error::Error| e.to_string())?;
+
+            let mut encrypted_salt: Option<Vec<u8>> = None;
+
+            while let Some(doc_result) = cursor
+                .try_next()
+                .await
+                .map_err(|e: mongodb::error::Error| e.to_string())?
+            {
+                let remark = doc_result
+                    .get_document("args")
+                    .ok()
+                    .and_then(|args: &Document| args.get("remark"))
+                    .and_then(|v| match v {
+                        Bson::String(s) => Some(s.as_str()),
+                        _ => None,
+                    });
+
+                let Some(remark_hex) = remark else { continue };
+                let Ok(remark_bytes) = corevo_lib::primitives::decode_hex(remark_hex) else {
+                    continue;
+                };
+                let Ok(prefixed) = PrefixedCorevoRemark::decode(&mut remark_bytes.as_slice())
+                else {
+                    continue;
                 };
 
-                let mut cursor = coll
-                    .find(filter)
-                    .await
-                    .map_err(|e: mongodb::error::Error| e.to_string())?;
+                #[allow(irrefutable_let_patterns)]
+                let CorevoRemark::V1(CorevoRemarkV1 {
+                    context: msg_ctx,
+                    msg,
+                }) = prefixed.0
+                else {
+                    continue;
+                };
 
-                let mut encrypted_salt: Option<Vec<u8>> = None;
-
-                while let Some(doc_result) = cursor
-                    .try_next()
-                    .await
-                    .map_err(|e: mongodb::error::Error| e.to_string())?
-                {
-                    let remark = doc_result
-                        .get_document("args")
-                        .ok()
-                        .and_then(|args: &Document| args.get("remark"))
-                        .and_then(|v| match v {
-                            Bson::String(s) => Some(s.as_str()),
-                            _ => None,
-                        });
-
-                    let Some(remark_hex) = remark else { continue };
-                    let Ok(remark_bytes) = corevo_lib::primitives::decode_hex(remark_hex) else {
-                        continue;
-                    };
-                    let Ok(prefixed) = PrefixedCorevoRemark::decode(&mut remark_bytes.as_slice())
-                    else {
-                        continue;
-                    };
-
-                    #[allow(irrefutable_let_patterns)]
-                    let CorevoRemark::V1(CorevoRemarkV1 {
-                        context: msg_ctx,
-                        msg,
-                    }) = prefixed.0
-                    else {
-                        continue;
-                    };
-
-                    // Check if this is for our context
-                    if msg_ctx != context {
-                        continue;
-                    }
-
-                    // Check if this is an InviteVoter message for us
-                    if let CorevoMessage::InviteVoter(voter_id, enc_salt) = msg {
-                        // Check if this invite is for us (compare SS58 addresses)
-                        let voter_ss58 = format_account_ss58(&voter_id, ss58_prefix);
-                        if voter_ss58 == my_ss58_address {
-                            encrypted_salt = Some(enc_salt);
-                            break;
-                        }
-                    }
+                // Check if this is for our context
+                if msg_ctx != context {
+                    continue;
                 }
 
-                let encrypted_salt =
-                    encrypted_salt.ok_or("No invite found for your account in this context")?;
+                // Check if this is an InviteVoter message for us
+                if let CorevoMessage::InviteVoter(voter_id, enc_salt) = msg {
+                    // Check if this invite is for us (compare SS58 addresses)
+                    let voter_ss58 = format_account_ss58(&voter_id, ss58_prefix);
+                    if voter_ss58 == my_ss58_address {
+                        encrypted_salt = Some(enc_salt);
+                        break;
+                    }
+                }
+            }
 
+            let encrypted_salt =
+                encrypted_salt.ok_or("No invite found for your account in this context")?;
+
+            // Check if this is a public context (empty encrypted salt)
+            if encrypted_salt.is_empty() {
+                None
+            } else {
                 // Decrypt the common salt using our secret + proposer's public key
                 let decrypted =
                     decrypt_from_sender(&account.x25519_secret, &proposer_pubkey, &encrypted_salt)
@@ -1036,10 +1109,11 @@ async fn commit_vote(
                 salt.copy_from_slice(&decrypted);
                 Some(salt)
             }
-        } else {
-            // Context not found in history - assume public context
-            None
-        };
+        }
+    } else {
+        // Context not found in history - assume public context
+        None
+    };
 
     // Generate one-time salt for this vote
     let mut onetime_salt = [0u8; 32];

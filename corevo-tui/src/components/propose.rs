@@ -249,8 +249,13 @@ impl ProposeComponent {
         // Status
         let status_content = match &app.propose_loading {
             LoadingState::Loading => {
+                let msg = if app.propose_form.use_common_salt {
+                    "Creating context and sending invitations..."
+                } else {
+                    "Creating public context..."
+                };
                 vec![Line::from(Span::styled(
-                    "Generating common salt and sending invitations...",
+                    msg,
                     Style::default().fg(Color::Yellow),
                 ))]
             }
@@ -261,8 +266,13 @@ impl ProposeComponent {
                 ))]
             }
             LoadingState::Loaded => {
+                let msg = if app.propose_form.use_common_salt {
+                    "Context created and invitations sent!"
+                } else {
+                    "Public context created!"
+                };
                 vec![Line::from(Span::styled(
-                    "Context created and invitations sent successfully!",
+                    msg,
                     Style::default().fg(Color::Green),
                 ))]
             }
@@ -312,7 +322,11 @@ impl ProposeComponent {
             }
             ProposeField::CreateButton => {
                 if can_submit {
-                    "Enter: Create & Send Invitations | Tab/Up: Back | Esc: Cancel"
+                    if app.propose_form.use_common_salt {
+                        "Enter: Create & Send Invitations | Tab/Up: Back | Esc: Cancel"
+                    } else {
+                        "Enter: Create Public Context | Tab/Up: Back | Esc: Cancel"
+                    }
                 } else {
                     "Tab/Up: Back | Esc: Cancel"
                 }
