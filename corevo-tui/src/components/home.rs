@@ -24,13 +24,16 @@ impl HomeComponent {
             .split(frame.area());
 
         // Title
-        let title = Paragraph::new(format!("CoReVo {} - Commit-Reveal Voting", env!("CARGO_PKG_VERSION")))
-            .style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .block(Block::default().borders(Borders::BOTTOM));
+        let title = Paragraph::new(format!(
+            "CoReVo {} - Commit-Reveal Voting",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .block(Block::default().borders(Borders::BOTTOM));
         frame.render_widget(title, chunks[0]);
 
         // Info box
