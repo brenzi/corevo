@@ -91,6 +91,9 @@ pub struct App {
     /// Whether to show the reveal confirmation dialog
     pub show_reveal_confirm: bool,
 
+    /// Whether to show the save config confirmation dialog
+    pub show_save_confirm: bool,
+
     /// Error message to display
     pub error_message: Option<String>,
 
@@ -186,6 +189,7 @@ impl App {
             voting_loading: LoadingState::Idle,
             announce_loading: LoadingState::Idle,
             show_reveal_confirm: false,
+            show_save_confirm: false,
             error_message: None,
             action_tx,
             last_click: None,
@@ -269,15 +273,28 @@ impl App {
         })
     }
 
+    /// Check if config form has unsaved changes
+    pub fn has_unsaved_config_changes(&self) -> bool {
+        self.config_form.chain_url != self.config.chain_url
+            || self.config_form.mongodb_uri != self.config.mongodb_uri
+            || self.config_form.mongodb_db != self.config.mongodb_db
+    }
+
     /// Handle an action and update state
     pub fn handle_action(&mut self, action: Action) {
         match action {
             // Navigation
             Action::NavigateHome => {
-                self.screen = Screen::Home;
-                self.selected_index = 0;
-                self.show_reveal_confirm = false;
-                self.voting_loading = LoadingState::Idle;
+                // If on config screen with unsaved changes, show save confirmation
+                if self.screen == Screen::Config && self.has_unsaved_config_changes() {
+                    self.show_save_confirm = true;
+                } else {
+                    self.screen = Screen::Home;
+                    self.selected_index = 0;
+                    self.show_reveal_confirm = false;
+                    self.show_save_confirm = false;
+                    self.voting_loading = LoadingState::Idle;
+                }
             }
             Action::NavigateHistory => {
                 self.screen = Screen::History;
@@ -421,6 +438,14 @@ impl App {
                 self.config.chain_url = self.config_form.chain_url.clone();
                 self.config.mongodb_uri = self.config_form.mongodb_uri.clone();
                 self.config.mongodb_db = self.config_form.mongodb_db.clone();
+                self.history = None;
+                self.history_loading = LoadingState::Idle;
+                // If save was triggered from the confirmation dialog, navigate home
+                if self.show_save_confirm {
+                    self.show_save_confirm = false;
+                    self.screen = Screen::Home;
+                    self.selected_index = 0;
+                }
             }
             Action::ConfigSaved(result) => {
                 if let Err(e) = result {
@@ -700,6 +725,21 @@ impl App {
             }
             Action::CancelReveal => {
                 self.show_reveal_confirm = false;
+            }
+            Action::ShowSaveConfirm => {
+                self.show_save_confirm = true;
+            }
+            Action::CancelSaveConfirm => {
+                self.show_save_confirm = false;
+            }
+            Action::ConfirmDiscard => {
+                // Discard changes: reset form to saved config values
+                self.config_form.chain_url = self.config.chain_url.clone();
+                self.config_form.mongodb_uri = self.config.mongodb_uri.clone();
+                self.config_form.mongodb_db = self.config.mongodb_db.clone();
+                self.show_save_confirm = false;
+                self.screen = Screen::Home;
+                self.selected_index = 0;
             }
             Action::ConfirmReveal => {
                 self.show_reveal_confirm = false;

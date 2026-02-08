@@ -128,11 +128,55 @@ impl ConfigComponent {
         );
 
         // Help
-        let help = Paragraph::new(
-            "Tab/Up/Down: Navigate | Ctrl+V: Paste | Ctrl+U: Clear | Ctrl+S: Save | Esc: Back",
-        )
-        .style(Style::default().fg(Color::DarkGray))
-        .block(Block::default().borders(Borders::TOP));
+        let help_text = if app.show_save_confirm {
+            "Y/Enter: Save | N: Discard | Esc: Cancel"
+        } else {
+            "Tab/Up/Down: Navigate | Ctrl+V: Paste | Ctrl+U: Clear | Ctrl+S: Save | Esc: Back"
+        };
+        let help = Paragraph::new(help_text)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::TOP));
         frame.render_widget(help, chunks[2]);
+
+        // Save confirmation dialog
+        if app.show_save_confirm {
+            use ratatui::layout::Alignment;
+
+            let dialog_area = centered_rect(50, 20, frame.area());
+
+            // Clear the dialog area
+            frame.render_widget(ratatui::widgets::Clear, dialog_area);
+
+            let dialog = Paragraph::new("You have unsaved changes.\nSave before leaving?")
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .title("Unsaved Changes")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                );
+            frame.render_widget(dialog, dialog_area);
+        }
     }
+}
+
+/// Helper function to create a centered rect
+fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }

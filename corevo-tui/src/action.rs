@@ -42,6 +42,9 @@ pub enum Action {
     UpdateSecretUri(String),
     NextConfigField,
     PrevConfigField,
+    ShowSaveConfirm,
+    CancelSaveConfirm,
+    ConfirmDiscard,
 
     // Text input (for config fields)
     InputChar(char),

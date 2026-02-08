@@ -24,7 +24,7 @@ impl HomeComponent {
             .split(frame.area());
 
         // Title
-        let title = Paragraph::new("CoReVo - Commit-Reveal Voting")
+        let title = Paragraph::new(format!("CoReVo {} - Commit-Reveal Voting", env!("CARGO_PKG_VERSION")))
             .style(
                 Style::default()
                     .fg(Color::Cyan)

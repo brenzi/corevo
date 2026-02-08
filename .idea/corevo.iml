@@ -5,6 +5,7 @@
       <sourceFolder url="file://$MODULE_DIR$/corevo-lib/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/corevo-tui/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/corevo-lib/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

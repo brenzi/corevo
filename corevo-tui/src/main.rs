@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
                     }
                     Action::LoadBalance => {
                         if app.derived_address.is_some() {
-                            let chain_url = app.config_form.chain_url.clone();
+                            let chain_url = app.config.chain_url.clone();
                             let secret_uri = app.secret_uri.clone();
                             // Capture the ID that will be set after handle_action increments it
                             let request_id = app.balance_request_id.wrapping_add(1);
@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Action::ProposeContext => {
-                        let chain_url = app.config_form.chain_url.clone();
+                        let chain_url = app.config.chain_url.clone();
                         let secret_uri = app.secret_uri.clone();
                         let context_name = app.propose_form.context_name.clone();
                         let use_common_salt = app.propose_form.use_common_salt;
@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
                         });
                     }
                     Action::CommitVote(vote) => {
-                        let chain_url = app.config_form.chain_url.clone();
+                        let chain_url = app.config.chain_url.clone();
                         let secret_uri = app.secret_uri.clone();
                         let context = app.selected_context.clone();
                         let config = app.config.clone();
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
                         });
                     }
                     Action::ConfirmReveal => {
-                        let chain_url = app.config_form.chain_url.clone();
+                        let chain_url = app.config.chain_url.clone();
                         let secret_uri = app.secret_uri.clone();
                         let context = app.selected_context.clone();
                         let config = app.config.clone();
@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
                         });
                     }
                     Action::AnnouncePubkey => {
-                        let chain_url = app.config_form.chain_url.clone();
+                        let chain_url = app.config.chain_url.clone();
                         let secret_uri = app.secret_uri.clone();
                         let tx = action_tx.clone();
                         tokio::spawn(async move {
@@ -469,7 +469,17 @@ fn handle_voting_keys(app: &App, key: KeyEvent) -> Option<Action> {
     }
 }
 
-fn handle_config_keys(_app: &App, key: KeyEvent) -> Option<Action> {
+fn handle_config_keys(app: &App, key: KeyEvent) -> Option<Action> {
+    // Handle save confirmation dialog
+    if app.show_save_confirm {
+        return match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => Some(Action::SaveConfig),
+            KeyCode::Char('n') | KeyCode::Char('N') => Some(Action::ConfirmDiscard),
+            KeyCode::Esc => Some(Action::CancelSaveConfirm),
+            _ => None,
+        };
+    }
+
     match key.code {
         KeyCode::Esc => Some(Action::NavigateHome),
         KeyCode::Tab => Some(Action::NextConfigField),
