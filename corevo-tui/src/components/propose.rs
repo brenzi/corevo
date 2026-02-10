@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
 use crate::app::{App, LoadingState, ProposeField};
@@ -19,11 +19,11 @@ impl ProposeComponent {
             .constraints([
                 Constraint::Length(3), // Title
                 Constraint::Length(3), // Context name field
-                Constraint::Length(3), // Common salt toggle
-                Constraint::Min(6),    // Voter selection list
+                Constraint::Length(5), // Common salt toggle (extra height for wrapping)
+                Constraint::Min(5),    // Voter selection list
                 Constraint::Length(3), // Create button
                 Constraint::Length(3), // Status
-                Constraint::Length(3), // Help
+                Constraint::Length(2), // Help (no borders, so 2 is enough)
             ])
             .split(frame.area());
 
@@ -90,22 +90,19 @@ impl ProposeComponent {
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        let salt_field = Paragraph::new(Line::from(vec![
-            Span::styled(checkbox, salt_checkbox_style),
-            Span::raw(" "),
-            Span::styled(
-                "Use group salt to hide votes from public ",
-                Style::default().fg(Color::Cyan),
-            ),
-            Span::styled(
-                if app.propose_form.use_common_salt {
-                    "(votes require proposer key to reveal)"
-                } else {
-                    "(votes publicly verifiable)"
-                },
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]))
+        let salt_description = if app.propose_form.use_common_salt {
+            "Hide votes from public (requires proposer key to reveal)"
+        } else {
+            "Votes publicly verifiable by anyone"
+        };
+        let salt_field = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(checkbox, salt_checkbox_style),
+                Span::styled(" Use group salt", Style::default().fg(Color::Cyan)),
+            ]),
+            Line::from(Span::styled(salt_description, Style::default().fg(Color::DarkGray))),
+        ])
+        .wrap(Wrap { trim: true })
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -195,9 +192,18 @@ impl ProposeComponent {
             }
         };
 
+        // Determine if a voter is focused and get the index for auto-scroll
+        let focused_voter_index = match app.propose_form.focused_field {
+            ProposeField::Voter(i) => Some(i),
+            _ => None,
+        };
+
         let voter_list = List::new(voter_content)
             .block(Block::default().borders(Borders::ALL).title(voter_title));
-        frame.render_widget(voter_list, chunks[3]);
+
+        // Use stateful rendering for auto-scroll when a voter is focused
+        let mut list_state = ListState::default().with_selected(focused_voter_index);
+        frame.render_stateful_widget(voter_list, chunks[3], &mut list_state);
 
         // Create button
         let button_focused = app.propose_form.focused_field == ProposeField::CreateButton;
